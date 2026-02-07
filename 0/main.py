@@ -330,8 +330,9 @@ def post_process_ma_features(features_df, stock_prefix='E'):
 
     return features_df
 
+
 def enhanced_sector_features(stock_features_dict):
-    """增强版板块特征"""
+    """增强版板块特征 - 改进版"""
     sector_features = {}
 
     # === 板块动量特征 ===
@@ -343,39 +344,90 @@ def enhanced_sector_features(stock_features_dict):
                     (stock_features_dict[f'{stock}_price_momentum_5'].rolling(20).std() + 1e-6)
             )
 
-    # === 板块相关性矩阵特征 ===
-    momentum_cols = []
+    # === 新增：板块同步性特征 ===
+    print("  添加板块同步性特征...")
+
+    # 1. 计算板块内各股票收益率的同步性
+    return_cols = []
+    for stock in ['A', 'B', 'C', 'D', 'E']:
+        if f'{stock}_Return5min' in stock_features_dict:
+            return_cols.append(f'{stock}_Return5min')
+
+    if len(return_cols) >= 2:
+        # 创建收益率DataFrame
+        returns_df = pd.DataFrame({col: stock_features_dict[col] for col in return_cols})
+
+        # 计算E股与其他股票收益率的相关系数矩阵（滚动）
+        e_returns = returns_df['E_Return5min'] if 'E_Return5min' in returns_df.columns else returns_df.iloc[:, -1]
+
+        for stock in ['A', 'B', 'C', 'D']:
+            stock_col = f'{stock}_Return5min'
+            if stock_col in returns_df.columns:
+                # 滚动相关性（过去30个周期）
+                rolling_corr = e_returns.rolling(30).corr(returns_df[stock_col])
+                sector_features[f'E_{stock}_return_corr_30'] = rolling_corr
+
+                # 相关性变化率
+                sector_features[f'E_{stock}_return_corr_change'] = rolling_corr.diff(10)
+
+    # === 新增：板块领先-滞后关系 ===
+    print("  添加板块领先-滞后特征...")
+
+    # 寻找哪个股票对E股有领先作用（更精确的计算）
+    for lead_stock in ['A', 'B', 'C', 'D']:
+        lead_col = f'{lead_stock}_Return5min'
+        lag_col = 'E_Return5min'
+
+        if lead_col in stock_features_dict and lag_col in stock_features_dict:
+            lead_returns = stock_features_dict[lead_col]
+            lag_returns = stock_features_dict[lag_col]
+
+            # 测试不同的滞后阶数
+            for lag in [1, 2, 3, 5, 10, 20]:
+                # 计算交叉相关性
+                cross_corr = lead_returns.shift(lag).rolling(50).corr(lag_returns)
+                sector_features[f'{lead_stock}_lead_E_{lag}'] = cross_corr
+
+                # 领先效应的强度（标准化）
+                sector_features[f'{lead_stock}_lead_E_{lag}_strength'] = (
+                        cross_corr * lead_returns.shift(lag).abs()
+                )
+
+    # === 新增：板块组合特征 ===
+    print("  添加板块组合特征...")
+
+    # 1. 板块平均收益率
+    sector_returns = []
+    for stock in ['A', 'B', 'C', 'D']:
+        if f'{stock}_Return5min' in stock_features_dict:
+            sector_returns.append(stock_features_dict[f'{stock}_Return5min'])
+
+    if sector_returns:
+        sector_avg_return = pd.concat(sector_returns, axis=1).mean(axis=1)
+        sector_features['sector_avg_return'] = sector_avg_return
+
+        # E股与板块平均的差异
+        if 'E_Return5min' in stock_features_dict:
+            e_return = stock_features_dict['E_Return5min']
+            sector_features['E_sector_return_diff'] = e_return - sector_avg_return
+            sector_features['E_sector_return_ratio'] = e_return / (sector_avg_return.abs() + 1e-6)
+
+    # 2. 板块离散度（各股票收益率的标准差）
+    if len(sector_returns) >= 2:
+        sector_returns_df = pd.concat(sector_returns, axis=1)
+        sector_features['sector_return_std'] = sector_returns_df.std(axis=1)
+        sector_features['sector_return_max_min'] = sector_returns_df.max(axis=1) - sector_returns_df.min(axis=1)
+
+    # 3. 板块动量一致性（各股票动量方向是否一致）
+    momentum_signs = []
     for stock in ['A', 'B', 'C', 'D']:
         if f'{stock}_price_momentum_5' in stock_features_dict:
-            momentum_cols.append(f'{stock}_price_momentum_5')
+            momentum_signs.append(np.sign(stock_features_dict[f'{stock}_price_momentum_5']))
 
-    if momentum_cols and 'E_price_momentum_5' in stock_features_dict:
-        momentum_df = pd.DataFrame({
-            col: stock_features_dict[col] for col in momentum_cols
-        })
-
-        # E股与板块平均动量的相关性
-        sector_avg_momentum = momentum_df.mean(axis=1)
-        sector_features['E_sector_momentum_corr'] = (
-            stock_features_dict['E_price_momentum_5'].rolling(30).corr(sector_avg_momentum)
-        )
-
-        # 板块动量离散度
-        sector_features['sector_momentum_std'] = momentum_df.std(axis=1)
-
-    # === 领先滞后关系（改进版）===
-    # 寻找哪个股票对E股有领先作用
-    for lead_stock in ['A', 'B', 'C', 'D']:
-        for lag in [1, 2, 3, 5, 10]:
-            lead_col = f'{lead_stock}_price_momentum_5'
-            lag_col = f'E_price_momentum_5'
-
-            if lead_col in stock_features_dict and lag_col in stock_features_dict:
-                # 计算交叉相关性
-                cross_corr = stock_features_dict[lead_col].shift(lag).rolling(30).corr(
-                    stock_features_dict[lag_col]
-                )
-                sector_features[f'{lead_stock}_lead_E_{lag}'] = cross_corr
+    if momentum_signs:
+        signs_df = pd.concat(momentum_signs, axis=1)
+        # 计算一致性：正号的比例
+        sector_features['sector_momentum_consistency'] = (signs_df == 1).sum(axis=1) / len(momentum_signs)
 
     return sector_features
 
@@ -525,6 +577,100 @@ def feature_post_processing(features_df):
             print(f"  移除{len(high_time_corr)}个与时间高度相关的特征")
             features_df = features_df.drop(columns=high_time_corr)
 
+    # 4. 板块特征专门处理（新增部分）
+    print("  4. 处理板块特征...")
+
+    # 4.1 识别板块特征
+    sector_cols = [col for col in features_df.columns if any(x in col for x in [
+        '_lead_', '_corr_', 'sector_', 'E_sector', 'A_', 'B_', 'C_', 'D_'
+    ]) and col not in ['target']]
+
+    print(f"    找到{len(sector_cols)}个板块相关特征")
+
+    if sector_cols:
+        # 4.2 移除低质量的板块特征（波动太小）
+        sector_features = features_df[sector_cols]
+        variances = sector_features.var()
+        low_var_sector_features = variances[variances < 1e-8].index.tolist()
+
+        if low_var_sector_features:
+            print(f"    移除{len(low_var_sector_features)}个低方差板块特征")
+            features_df = features_df.drop(columns=low_var_sector_features)
+            # 更新sector_cols
+            sector_cols = [col for col in sector_cols if col not in low_var_sector_features]
+
+        # 4.3 创建板块特征组合（板块综合指标）
+        # 如果有很多相关性特征，可以创建一个综合指标
+        corr_cols = [col for col in sector_cols if '_corr_' in col]
+        if len(corr_cols) >= 3:
+            # 平均相关性
+            features_df['sector_corr_avg'] = features_df[corr_cols].mean(axis=1)
+
+            # 最大相关性
+            features_df['sector_corr_max'] = features_df[corr_cols].max(axis=1)
+
+            # 相关性离散度
+            features_df['sector_corr_std'] = features_df[corr_cols].std(axis=1)
+
+            print(f"    创建了3个板块相关性综合特征")
+
+        # 4.4 创建板块动量综合指标
+        momentum_cols = [col for col in sector_cols if '_momentum_' in col]
+        if len(momentum_cols) >= 2:
+            features_df['sector_momentum_avg'] = features_df[momentum_cols].mean(axis=1)
+            features_df['sector_momentum_std'] = features_df[momentum_cols].std(axis=1)
+            print(f"    创建了2个板块动量综合特征")
+
+        # 4.5 创建领先-滞后关系综合指标
+        lead_cols = [col for col in sector_cols if '_lead_' in col]
+        if len(lead_cols) >= 2:
+            # 找出最强的领先股票（相关性最高的）
+            lead_features = features_df[lead_cols]
+            # 创建综合领先指标
+            features_df['sector_lead_strength'] = lead_features.max(axis=1)
+            features_df['sector_lead_consistency'] = (lead_features > 0.1).mean(axis=1)
+            print(f"    创建了2个领先关系综合特征")
+
+    # 5. 创建板块效应强度指标（最终综合）
+    print("  5. 创建板块效应综合指标...")
+
+    # 识别所有板块效应的特征
+    all_sector_effect_cols = [
+        col for col in features_df.columns
+        if any(x in col for x in ['sector_', '_lead_', '_corr_']) and col != 'target'
+    ]
+
+    if all_sector_effect_cols:
+        # 板块效应强度（标准化后的综合得分）
+        sector_effect_matrix = features_df[all_sector_effect_cols]
+
+        # 使用PCA或简单平均创建综合指标
+        # 这里使用简单平均，因为特征已经标准化过
+        features_df['sector_effect_strength'] = sector_effect_matrix.mean(axis=1)
+
+        # 板块效应离散度（指标间的一致性）
+        features_df['sector_effect_consistency'] = 1.0 / (sector_effect_matrix.std(axis=1) + 1e-6)
+
+        print(f"    基于{len(all_sector_effect_cols)}个板块特征创建了2个综合指标")
+
+    # 6. 最终检查和处理
+    print("  6. 最终检查...")
+
+    # 移除与target相关性为NaN的特征
+    if 'target' in features_df.columns:
+        target_corr = features_df.corrwith(features_df['target']).abs()
+        nan_corr_features = target_corr[target_corr.isna()].index.tolist()
+        nan_corr_features = [f for f in nan_corr_features if f != 'target']
+
+        if nan_corr_features:
+            print(f"    移除{len(nan_corr_features)}个与目标相关性为NaN的特征")
+            features_df = features_df.drop(columns=nan_corr_features)
+
+    # 确保没有inf或NaN值
+    features_df = features_df.replace([np.inf, -np.inf], np.nan)
+    features_df = features_df.fillna(0)
+
+    print(f"  后处理完成，最终特征数: {len(features_df.columns)}")
     return features_df
 
 
@@ -736,14 +882,14 @@ def main_enhanced():
     print("\n[步骤2] 增强版特征工程")
     features_df = create_all_features_enhanced(merged_data)
 
-    # # 3. 特征后处理
-    # features_df = feature_post_processing(features_df)
+    # 3. 特征后处理
+    features_df = feature_post_processing(features_df)
 
     # 4. 特征选择（选择更多特征）
     print("\n[步骤3] 特征选择")
     selected_df, selected_features = select_important_features(
         features_df,
-        n_features=50  # 选择50个特征
+        n_features=100
     )
 
     x = selected_df.drop(columns=['target'])
@@ -751,7 +897,7 @@ def main_enhanced():
 
     # 清洗目标变量异常值
     print("\n[步骤3.5] 清洗目标变量异常值")
-    y = clean_target_outliers(y, n_sigma=4)
+    y = clean_target_outliers(y, n_sigma=3)
 
     # 4. 时间序列交叉验证
     print("\n[步骤4] 时间序列交叉验证")
