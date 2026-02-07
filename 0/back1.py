@@ -360,6 +360,7 @@ def create_all_features_enhanced(df):
         features = enhanced_stock_features(df, f'{stock}_')
         stock_features_dict.update(features)
 
+
     # 创建板块特征
     print("  创建增强版板块特征...")
     sector_features = enhanced_sector_features(df, stock_features_dict)
