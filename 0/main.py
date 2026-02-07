@@ -122,7 +122,7 @@ def enhanced_stock_features(df, stock_prefix):
             '15min': 1800,  # 15分钟 (预测窗口的3倍)
         }
 
-        # 计算所有移动平均线
+        # 1. 计算所有移动平均线
         ma_dict = {}
         for name, window in ma_windows.items():
             ma_key = f'{stock_prefix}ma_{name}'
@@ -240,7 +240,7 @@ def enhanced_stock_features(df, stock_prefix):
             features[f'{stock_prefix}divergence_1min'] = divergence_1min.astype(int)
             features[f'{stock_prefix}divergence_5min'] = divergence_5min.astype(int)
 
-        # 5. 收益率波动率（使用1期收益率）
+        # 4. 收益率波动率（使用1期收益率）
         ret_1 = df[last_price_col].pct_change()
         features[f'{stock_prefix}ret_volatility_10'] = ret_1.rolling(10).std()
         features[f'{stock_prefix}ret_volatility_20'] = ret_1.rolling(20).std()
@@ -433,47 +433,6 @@ def add_e_specific_features(df, stock_features_dict):
 
     return e_features
 
-def add_critical_features(df, stock_prefix):
-    """添加关键的核心特征"""
-    features = {}
-
-    # 基础价格列
-    last_price_col = f'{stock_prefix}LastPrice'
-
-    if last_price_col in df.columns:
-        # 1. **价格动量（最重要的特征）**
-        for window in [1, 2, 5, 10, 20, 30, 50, 100]:
-            features[f'{stock_prefix}ret_{window}'] = df[last_price_col].pct_change(window)
-
-        # 2. **价格位置（相对于最近N个tick的高低点）**
-        features[f'{stock_prefix}price_position_20'] = (
-                (df[last_price_col] - df[last_price_col].rolling(20).min()) /
-                (df[last_price_col].rolling(20).max() - df[last_price_col].rolling(20).min() + 1e-6)
-        )
-
-        # 3. **价格变化加速度**
-        ret_1 = df[last_price_col].pct_change()
-        ret_2 = df[last_price_col].pct_change(2)
-        features[f'{stock_prefix}acceleration'] = ret_1 - ret_2.shift(1)
-
-        # 4. **价格波动性**
-        features[f'{stock_prefix}volatility_10'] = df[last_price_col].pct_change().rolling(10).std()
-        features[f'{stock_prefix}volatility_20'] = df[last_price_col].pct_change().rolling(20).std()
-
-    # 成交量特征
-    if f'{stock_prefix}Volume' in df.columns:
-        # 5. **成交量异常**
-        avg_volume = df[f'{stock_prefix}Volume'].rolling(50).mean()
-        features[f'{stock_prefix}volume_ratio'] = df[f'{stock_prefix}Volume'] / (avg_volume + 1e-6)
-
-    # 买卖盘特征
-    if f'{stock_prefix}BidVolume1' in df.columns and f'{stock_prefix}AskVolume1' in df.columns:
-        # 6. **买卖盘压力**
-        bid_pressure = df[f'{stock_prefix}BidVolume1'] - df[f'{stock_prefix}AskVolume1']
-        total_pressure = df[f'{stock_prefix}BidVolume1'] + df[f'{stock_prefix}AskVolume1']
-        features[f'{stock_prefix}bid_ask_pressure'] = bid_pressure / (total_pressure + 1e-6)
-
-    return features
 
 
 def create_all_features_enhanced(df):
@@ -485,10 +444,7 @@ def create_all_features_enhanced(df):
     # 为每只股票创建增强特征
     for stock in ['A', 'B', 'C', 'D', 'E']:
         print(f"  创建{stock}股增强特征...")
-        # 添加关键特征
-        critical_features = add_critical_features(df, f'{stock}_')
-        stock_features_dict.update(critical_features)
-        # 保留原有的增强特征
+        # 增强特征
         features = enhanced_stock_features(df, f'{stock}_')
         stock_features_dict.update(features)
 
@@ -500,7 +456,7 @@ def create_all_features_enhanced(df):
             processed_ma = post_process_ma_features(ma_df, f'{stock}_')
             stock_features_dict.update(processed_ma)
 
-    # **添加E股特定特征**
+    # 添加E股特定特征
     print("  添加E股特定特征...")
     e_specific_features = add_e_specific_features(df, stock_features_dict)
     stock_features_dict.update(e_specific_features)
@@ -532,55 +488,6 @@ def create_all_features_enhanced(df):
     print(f"增强特征创建完成，最终{len(all_features)}行，{len(all_features.columns)}个特征")
 
     return all_features
-
-
-def train_enhanced_lightgbm(X_train, y_train, X_val, y_val):
-    """增强版LightGBM训练"""
-    print("\n开始防过拟合训练（只看valid的rmse）...")
-
-    # 转换数据
-    X_train_np = np.asarray(X_train, dtype=np.float32)
-    X_val_np = np.asarray(X_val, dtype=np.float32)
-    y_train_np = np.asarray(y_train, dtype=np.float32)
-    y_val_np = np.asarray(y_val, dtype=np.float32)
-
-    train_data = lgb.Dataset(X_train_np, label=y_train_np)
-    val_data = lgb.Dataset(X_val_np, label=y_val_np, reference=train_data)
-
-    # 优化后的参数
-    params = {
-        'objective': 'regression',
-        'metric': 'rmse',
-        'boosting_type': 'gbdt',
-        'learning_rate': 0.1,
-        'num_leaves': 127,  # 增加叶子数
-        'max_depth': 10,
-        'min_data_in_leaf': 20,  # 减少最小叶子样本数
-        'bagging_fraction': 0.8,
-        'bagging_freq': 1,
-        'feature_fraction': 0.8,
-        'lambda_l1': 0.2,  # 增加L1正则化
-        'lambda_l2': 0.2,  # 增加L2正则化
-        'min_gain_to_split': 0.0,
-        'verbosity': -1,
-        'seed': 42,
-        'n_jobs': -1,
-    }
-
-    print("  开始增强训练...")
-
-    model = lgb.train(
-        params,
-        train_data,
-        num_boost_round=300,  # 增加训练轮数
-        valid_sets=[train_data, val_data],
-        valid_names=['train', 'valid'],
-        callbacks=[
-            lgb.log_evaluation(period=50)
-        ]
-    )
-
-    return model
 
 
 def feature_post_processing(features_df):
@@ -718,65 +625,49 @@ def clean_target_outliers(y, n_sigma=3):
 
 
 # ============ 第五部分：模型训练函数 ============
-def train_lightgbm_model(X_train, y_train, X_val, y_val):
-    """
-    训练LightGBM模型
+def train_enhanced_lightgbm(X_train, y_train, X_val, y_val):
+    """LightGBM训练"""
+    print("\n开始训练...")
 
-    LightGBM原理：
-    1. 基于梯度提升决策树（GBDT）
-    2. 使用直方图算法加速训练
-    3. 支持类别特征，自动处理缺失值
-
-    数学假设：
-    1. 目标变量（未来收益率）是连续的
-    2. 特征与目标之间存在非线性关系
-    3. 时序数据存在自相关性
-    """
-    print("\n训练LightGBM模型...")
-
-    # 强制转换为 numpy（确保 dtype 兼容）
+    # 转换数据
     X_train_np = np.asarray(X_train, dtype=np.float32)
     X_val_np = np.asarray(X_val, dtype=np.float32)
     y_train_np = np.asarray(y_train, dtype=np.float32)
     y_val_np = np.asarray(y_val, dtype=np.float32)
 
-    # 转换为LightGBM数据集格式
     train_data = lgb.Dataset(X_train_np, label=y_train_np)
     val_data = lgb.Dataset(X_val_np, label=y_val_np, reference=train_data)
 
-    # LightGBM参数（针对金融时序数据优化）
+    # 优化后的参数
     params = {
-        'objective': 'regression',  # 回归任务
-        'metric': 'rmse',  # 评估指标：均方根误差
-        'boosting_type': 'gbdt',  # 梯度提升决策树
-        'learning_rate': 0.01,  # 学习率（较小值防止过拟合）
-        'num_leaves': 15,  # 叶子节点数（控制模型复杂度）
-        'max_depth': 5,  # 最大深度
-        'min_data_in_leaf': 500,  # 叶子节点最小样本数（防过拟合）
-        'bagging_fraction': 0.7,  # 每次迭代用80%的数据
-        'bagging_freq': 3,  # 每5次迭代进行一次bagging
-        'feature_fraction': 0.7,  # 每次迭代用80%的特征
-        'lambda_l1': 0.5,  # L1正则化强度
-        'lambda_l2': 0.5,  # L2正则化强度
-        'min_gain_to_split': 0.02,  # 最小分裂增益
-        'verbosity': -1,  # 不输出训练过程
-        'seed': 42,  # 随机种子
-        'n_jobs': -1  # 使用所有CPU核心
+        'objective': 'regression',
+        'metric': 'rmse',
+        'boosting_type': 'gbdt',
+        'learning_rate': 0.1,
+        'num_leaves': 127,  # 增加叶子数
+        'max_depth': 10,
+        'min_data_in_leaf': 20,  # 减少最小叶子样本数
+        'bagging_fraction': 0.8,
+        'bagging_freq': 1,
+        'feature_fraction': 0.8,
+        'lambda_l1': 0.2,  # 增加L1正则化
+        'lambda_l2': 0.2,  # 增加L2正则化
+        'min_gain_to_split': 0.0,
+        'verbosity': -1,
+        'seed': 42,
+        'n_jobs': -1,
     }
 
-    print("  开始训练（可能需要几分钟，请耐心等待）...")
-
-    # 训练模型
+    print("  开始增强训练...")
 
     model = lgb.train(
         params,
         train_data,
-        num_boost_round=1000,
+        num_boost_round=300,  # 增加训练轮数
         valid_sets=[train_data, val_data],
         valid_names=['train', 'valid'],
         callbacks=[
-            lgb.early_stopping(stopping_rounds=50),
-            lgb.log_evaluation(period=100)
+            lgb.log_evaluation(period=50)
         ]
     )
 
@@ -851,17 +742,17 @@ def main_enhanced():
     print("\n[步骤3] 特征选择")
     selected_df, selected_features = select_important_features(
         features_df,
-        n_features=50  # 选择100个特征
+        n_features=50  # 选择50个特征
     )
 
     X = selected_df.drop(columns=['target'])
     y = selected_df['target']
 
-    # **清洗目标变量异常值**
+    # 清洗目标变量异常值
     print("\n[步骤3.5] 清洗目标变量异常值")
     y = clean_target_outliers(y, n_sigma=4)
 
-    # 5. 时间序列交叉验证
+    # 4. 时间序列交叉验证
     print("\n[步骤4] 时间序列交叉验证")
     tscv = TimeSeriesSplit(n_splits=5)
     ic_scores = []
@@ -875,7 +766,6 @@ def main_enhanced():
 
         print(f"  训练集：{len(X_train)}个样本，验证集：{len(X_val)}个样本")
 
-        # **使用StandardScaler**
         scaler = StandardScaler()
         X_train_scaled = scaler.fit_transform(X_train)
         X_val_scaled = scaler.transform(X_val)
