@@ -25,9 +25,6 @@ from scipy.stats import pearsonr, spearmanr  # 计算IC（相关系数）
 
 # ============ 第二部分：数据加载函数 ============
 def load_stock_data(stock_name, file_path):
-    """
-    加载单只股票的CSV数据 - 恢复单文件版本
-    """
     print(f"正在加载{stock_name}股数据...")
 
     # 读取CSV文件
