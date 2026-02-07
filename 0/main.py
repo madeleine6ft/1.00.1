@@ -147,8 +147,6 @@ def enhanced_stock_features(df, stock_prefix):
         for name in ['1min', '5min', '10min']:
             if name in ma_dict:
                 ma_value = ma_dict[name]
-                window = ma_windows[name]
-
                 # 短期变化：最近1分钟的变化
                 change_1min = ma_value - ma_value.shift(120)
                 features[f'{stock_prefix}ma_{name}_change_1min'] = change_1min / (ma_value.shift(120) + 1e-8)
@@ -332,7 +330,7 @@ def post_process_ma_features(features_df, stock_prefix='E'):
 
     return features_df
 
-def enhanced_sector_features(df, stock_features_dict):
+def enhanced_sector_features(stock_features_dict):
     """增强版板块特征"""
     sector_features = {}
 
@@ -397,7 +395,7 @@ def enhanced_time_features(time_series):
 
     return time_features
 
-def add_e_specific_features(df, stock_features_dict):
+def add_e_specific_features(stock_features_dict):
     """为E股添加特定特征（预测目标）"""
     e_features = {}
 
@@ -448,22 +446,22 @@ def create_all_features_enhanced(df):
         features = enhanced_stock_features(df, f'{stock}_')
         stock_features_dict.update(features)
 
-    # 对MA特征进行后处理（主要对E股票）
-    if stock == 'E':
-        ma_features = {k: v for k, v in features.items() if 'ma_' in k}
-        if ma_features:
-            ma_df = pd.DataFrame(ma_features)
-            processed_ma = post_process_ma_features(ma_df, f'{stock}_')
-            stock_features_dict.update(processed_ma)
+        # 对MA特征进行后处理（主要对E股票）
+        if stock == 'E':
+            ma_features = {k: v for k, v in features.items() if 'ma_' in k}
+            if ma_features:
+                ma_df = pd.DataFrame(ma_features)
+                processed_ma = post_process_ma_features(ma_df, f'{stock}_')
+                stock_features_dict.update(processed_ma)
 
     # 添加E股特定特征
     print("  添加E股特定特征...")
-    e_specific_features = add_e_specific_features(df, stock_features_dict)
+    e_specific_features = add_e_specific_features(stock_features_dict)
     stock_features_dict.update(e_specific_features)
 
     # 创建板块特征
     print("  创建增强版板块特征...")
-    sector_features = enhanced_sector_features(df, stock_features_dict)
+    sector_features = enhanced_sector_features(stock_features_dict)
 
     # 创建极简时间特征
     print("  创建极简时间特征...")
@@ -521,7 +519,7 @@ def feature_post_processing(features_df):
     # 3. 移除对时间特征过于依赖的特征（如果minute_of_day相关性太高）
     if 'minute_of_day' in features_df.columns:
         time_corr = features_df.corrwith(features_df['minute_of_day']).abs()
-        high_time_corr = time_corr[time_corr > 0.8].index.tolist()
+        high_time_corr = time_corr[time_corr > 0.9].index.tolist()
         high_time_corr = [f for f in high_time_corr if f != 'minute_of_day' and f != 'target']
         if high_time_corr:
             print(f"  移除{len(high_time_corr)}个与时间高度相关的特征")
@@ -545,17 +543,17 @@ def select_important_features(features_df, target_col='target', n_features=100):
     print(f"\n选择最重要的{n_features}个特征...")
 
     # 分离特征和目标
-    X = features_df.drop(columns=[target_col])
+    x = features_df.drop(columns=[target_col])
     y = features_df[target_col]
 
     # 将所有列转换为数值（无法转换的变为 NaN）
-    X = X.apply(pd.to_numeric, errors='coerce')
+    x = x.apply(pd.to_numeric, errors='coerce')
     # 将正负无穷替换为 NaN
-    X = X.replace([np.inf, -np.inf], np.nan)
+    x = x.replace([np.inf, -np.inf], np.nan)
     # 用0填充 NaN（也可改为其他策略）
-    X = X.fillna(0)
+    x = x.fillna(0)
     # 限制极端值，防止超出 float32 范围（阈值可调整）
-    X = X.clip(-1e10, 1e10)
+    x = x.clip(-1e10, 1e10)
 
     # 同样处理目标 y，避免异常值
     y = pd.to_numeric(y, errors='coerce').replace([np.inf, -np.inf], np.nan).fillna(0)
@@ -570,11 +568,11 @@ def select_important_features(features_df, target_col='target', n_features=100):
     )
 
     # 训练随机森林
-    rf.fit(X, y)
+    rf.fit(x, y)
 
     # 获取特征重要性
     importance_df = pd.DataFrame({
-        'feature': X.columns,
+        'feature': x.columns,
         'importance': rf.feature_importances_
     }).sort_values('importance', ascending=False)
 
@@ -588,7 +586,7 @@ def select_important_features(features_df, target_col='target', n_features=100):
 
 
 
-    selected_df = pd.concat([X[selected_features].reset_index(drop=True),
+    selected_df = pd.concat([x[selected_features].reset_index(drop=True),
                              pd.Series(y.values, name=target_col)], axis=1)
 
     # 最终再做一次数值化/替换/裁剪，确保没有 inf/NaN/超大值
@@ -625,18 +623,18 @@ def clean_target_outliers(y, n_sigma=3):
 
 
 # ============ 第五部分：模型训练函数 ============
-def train_enhanced_lightgbm(X_train, y_train, X_val, y_val):
+def train_enhanced_lightgbm(x_train, y_train, x_val, y_val):
     """LightGBM训练"""
     print("\n开始训练...")
 
     # 转换数据
-    X_train_np = np.asarray(X_train, dtype=np.float32)
-    X_val_np = np.asarray(X_val, dtype=np.float32)
+    x_train_np = np.asarray(x_train, dtype=np.float32)
+    x_val_np = np.asarray(x_val, dtype=np.float32)
     y_train_np = np.asarray(y_train, dtype=np.float32)
     y_val_np = np.asarray(y_val, dtype=np.float32)
 
-    train_data = lgb.Dataset(X_train_np, label=y_train_np)
-    val_data = lgb.Dataset(X_val_np, label=y_val_np, reference=train_data)
+    train_data = lgb.Dataset(x_train_np, label=y_train_np)
+    val_data = lgb.Dataset(x_val_np, label=y_val_np, reference=train_data)
 
     # 优化后的参数
     params = {
@@ -745,7 +743,7 @@ def main_enhanced():
         n_features=50  # 选择50个特征
     )
 
-    X = selected_df.drop(columns=['target'])
+    x = selected_df.drop(columns=['target'])
     y = selected_df['target']
 
     # 清洗目标变量异常值
@@ -758,26 +756,26 @@ def main_enhanced():
     ic_scores = []
     rank_ic_scores = []
 
-    for fold, (train_idx, val_idx) in enumerate(tscv.split(X)):
+    for fold, (train_idx, val_idx) in enumerate(tscv.split(x)):
         print(f"\n--- 第{fold + 1}折交叉验证 ---")
 
-        X_train, X_val = X.iloc[train_idx], X.iloc[val_idx]
+        x_train, x_val = x.iloc[train_idx], x.iloc[val_idx]
         y_train, y_val = y[train_idx], y[val_idx]
 
-        print(f"  训练集：{len(X_train)}个样本，验证集：{len(X_val)}个样本")
+        print(f"  训练集：{len(x_train)}个样本，验证集：{len(x_val)}个样本")
 
         scaler = StandardScaler()
-        X_train_scaled = scaler.fit_transform(X_train)
-        X_val_scaled = scaler.transform(X_val)
+        x_train_scaled = scaler.fit_transform(x_train)
+        x_val_scaled = scaler.transform(x_val)
 
         # 训练增强版模型
         model = train_enhanced_lightgbm(
-            X_train_scaled, y_train,
-            X_val_scaled, y_val
+            x_train_scaled, y_train,
+            x_val_scaled, y_val
         )
 
         # 预测和评估
-        y_pred = model.predict(X_val_scaled)
+        y_pred = model.predict(x_val_scaled)
         ic = calculate_ic(y_val, y_pred)
         rank_ic = calculate_rank_ic(y_val, y_pred)
 
@@ -794,7 +792,6 @@ def main_enhanced():
     for i, ic in enumerate(ic_scores):
         print(f"  第{i + 1}折：{ic:.4f}")
     avg_ic = np.mean(ic_scores)
-    std_ic = np.std(ic_scores)
     print(f"\n平均IC：{np.mean(ic_scores):.4f} (±{np.std(ic_scores):.4f})")
     print(f"平均Rank IC：{np.mean(rank_ic_scores):.4f} (±{np.std(rank_ic_scores):.4f})")
 
@@ -802,9 +799,9 @@ def main_enhanced():
     if avg_ic > 0.07:
         print("\n[步骤6] 训练最终模型")
         final_scaler = StandardScaler()
-        X_scaled = final_scaler.fit_transform(X)
+        x_scaled = final_scaler.fit_transform(x)
 
-        train_data = lgb.Dataset(X_scaled, label=y)
+        train_data = lgb.Dataset(x_scaled, label=y)
 
         final_model = lgb.train(
             {
@@ -891,7 +888,6 @@ def predict_new_data(new_data_path, model_path='final_stock_model.pkl',
 
     # 确保特征一致
     missing_features = set(selected_features) - set(new_features.columns)
-    extra_features = set(new_features.columns) - set(selected_features + ['target'])
 
     if missing_features:
         print(f"警告：缺失{len(missing_features)}个特征")
@@ -901,14 +897,14 @@ def predict_new_data(new_data_path, model_path='final_stock_model.pkl',
             new_features[feature] = 0
 
     # 选择特征
-    X_new = new_features[selected_features]
+    x_new = new_features[selected_features]
 
     # 标准化
-    X_new_scaled = scaler.transform(X_new)
+    x_new_scaled = scaler.transform(x_new)
 
     # 预测
     print("进行预测...")
-    predictions = model.predict(X_new_scaled)
+    predictions = model.predict(x_new_scaled)
 
     # 创建结果DataFrame
     result_df = pd.DataFrame({
