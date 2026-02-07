@@ -166,8 +166,6 @@ def enhanced_stock_features(df, stock_prefix):
 
     # 基础价格列
     last_price_col = f'{stock_prefix}LastPrice'
-    bid_price_col = f'{stock_prefix}BidPrice1'
-    ask_price_col = f'{stock_prefix}AskPrice1'
 
     if last_price_col in df.columns:
         # === 价格趋势特征 ===
