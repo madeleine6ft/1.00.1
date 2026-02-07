@@ -121,7 +121,6 @@ def calculate_volatility(returns, window=20):
 
     假设说明：
     1. 假设收益率服从正态分布（简化假设）
-    2. 窗口大小20对应约10秒（如果500ms一个tick）
     """
     return returns.rolling(window=window).std()
 
