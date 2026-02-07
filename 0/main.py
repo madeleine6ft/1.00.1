@@ -641,19 +641,21 @@ def train_enhanced_lightgbm(x_train, y_train, x_val, y_val):
         'objective': 'regression',
         'metric': 'rmse',
         'boosting_type': 'gbdt',
-        'learning_rate': 0.1,
-        'num_leaves': 127,  # 增加叶子数
-        'max_depth': 10,
-        'min_data_in_leaf': 20,  # 减少最小叶子样本数
-        'bagging_fraction': 0.8,
-        'bagging_freq': 1,
-        'feature_fraction': 0.8,
-        'lambda_l1': 0.2,  # 增加L1正则化
-        'lambda_l2': 0.2,  # 增加L2正则化
-        'min_gain_to_split': 0.0,
+        'learning_rate': 0.05,
+        'num_leaves': 63,
+        'max_depth': 7,
+        'min_data_in_leaf': 100,
+        'bagging_fraction': 0.7,
+        'bagging_freq': 5,
+        'feature_fraction': 0.7,
+        'lambda_l1': 1,
+        'lambda_l2': 1,
+        'min_gain_to_split': 0.02,
         'verbosity': -1,
         'seed': 42,
         'n_jobs': -1,
+        'max_bin': 255,
+        'subsample_for_bin': 200000,
     }
 
     print("  开始增强训练...")
@@ -665,7 +667,8 @@ def train_enhanced_lightgbm(x_train, y_train, x_val, y_val):
         valid_sets=[train_data, val_data],
         valid_names=['train', 'valid'],
         callbacks=[
-            lgb.log_evaluation(period=50)
+            lgb.log_evaluation(period=50),
+            lgb.early_stopping(stopping_rounds=30)
         ]
     )
 
