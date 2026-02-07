@@ -178,8 +178,8 @@ def enhanced_stock_features(df, stock_prefix):
 
         # 2. 价格加速度（动量的变化率）
         features[f'{stock_prefix}price_acceleration'] = (
-                df[last_price_col].pct_change(periods=2) -
-                df[last_price_col].pct_change(periods=2).shift(2)
+                df[last_price_col].pct_change(periods=2).shift(2) -
+                df[last_price_col].pct_change(periods=2)
         )
 
         # 3. 价格波动范围
