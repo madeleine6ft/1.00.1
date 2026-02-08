@@ -855,7 +855,7 @@ def main_enhanced():
     print(f"平均Rank IC：{np.mean(rank_ic_scores):.4f} (±{np.std(rank_ic_scores):.4f})")
 
     # 7. 训练最终模型
-    if avg_ic > 0.07:
+    if avg_ic > 0.1:
         print("\n[步骤6] 训练最终模型")
         final_scaler = StandardScaler()
         x_scaled = final_scaler.fit_transform(x)
@@ -892,7 +892,7 @@ def main_enhanced():
         joblib.dump(final_scaler, 'scaler_enhanced.pkl')
         joblib.dump(selected_features, 'selected_features_enhanced.pkl')
 
-        print("\n修复版模型训练完成！IC有明显提升。")
+        print("\n模型训练完成！IC有明显提升。")
     else:
         print("\n警告：IC未达到阈值，不保存模型。建议检查数据或特征。")
 
@@ -900,16 +900,13 @@ def main_enhanced():
 
 
 # ============ 第八部分：预测新数据函数 ============
-def predict_new_data(new_data_path, model_path='final_stock_model.pkl',
-                     scaler_path='scaler.pkl', features_path='selected_features.pkl'):
+def predict_new_data(test_data_dir='test_data/1/', model_path='final_stock_model_enhanced.pkl',
+                     scaler_path='scaler_enhanced.pkl', features_path='selected_features_enhanced.pkl'):
     """
-    预测新数据（测试集的10秒数据）
+    预测新数据 - 支持五只股票数据
 
-    使用流程：
-    1. 先运行main()函数训练模型
-    2. 然后调用此函数预测新数据
-
-    注意：新数据格式应与训练数据一致，但不包含'target'列
+    参数：
+    test_data_dir: 测试数据目录，应包含A.csv, B.csv, C.csv, D.csv, E.csv
     """
     print("\n" + "=" * 60)
     print("开始预测新数据")
@@ -923,51 +920,73 @@ def predict_new_data(new_data_path, model_path='final_stock_model.pkl',
     scaler = joblib.load(scaler_path)
     selected_features = joblib.load(features_path)
 
-    # 加载新数据
-    print(f"加载新数据：{new_data_path}")
-    new_data = pd.read_csv(new_data_path)
+    # 加载五只股票的测试数据（与训练相同格式）
+    print(f"加载测试数据目录：{test_data_dir}")
 
-    # 检查新数据是否包含E股票
-    # 新数据可能是单独的E股票，或者是五只股票的10秒数据
-    # 这里假设新数据包含所有五只股票，格式与训练数据相同
+    # 创建数据配置字典
+    test_data_config = {
+        'A': f'{test_data_dir}A.csv',
+        'B': f'{test_data_dir}B.csv',
+        'C': f'{test_data_dir}C.csv',
+        'D': f'{test_data_dir}D.csv',
+        'E': f'{test_data_dir}E.csv'
+    }
 
-    # 如果新数据只有E股票，我们需要检查
-    if 'LastPrice' in new_data.columns and 'E_LastPrice' not in new_data.columns:
-        print("检测到新数据可能只包含E股票，正在处理...")
-        # 重命名列，添加E_前缀
-        rename_dict = {}
-        for col in new_data.columns:
-            if col != 'Time':
-                rename_dict[col] = f'E_{col}'
-        new_data = new_data.rename(columns=rename_dict)
+    # 检查文件是否存在
+    missing_files = []
+    for stock, path in test_data_config.items():
+        import os
+        if not os.path.exists(path):
+            missing_files.append(f"{stock}: {path}")
 
-    # 为新数据创建特征
+    if missing_files:
+        print(f"错误：缺少测试数据文件：")
+        for missing in missing_files:
+            print(f"  {missing}")
+        return None
+
+    # 合并五只股票数据（使用训练时的相同函数）
+    print("合并五只股票测试数据...")
+    test_merged_data = merge_all_stocks(test_data_config)
+
+    # 为新数据创建特征（使用与训练相同的特征工程）
     print("为新数据创建特征...")
-    new_features = feature_post_processing(new_data)
+    test_features = create_all_features_enhanced(test_merged_data)
+
+    # 移除目标列（测试数据不应该有target）
+    if 'target' in test_features.columns:
+        test_features = test_features.drop(columns=['target'])
 
     # 确保特征一致
-    missing_features = set(selected_features) - set(new_features.columns)
+    missing_features = set(selected_features) - set(test_features.columns)
+    extra_features = set(test_features.columns) - set(selected_features)
+
+    print(f"测试数据特征数: {len(test_features.columns)}")
+    print(f"模型需要特征数: {len(selected_features)}")
 
     if missing_features:
         print(f"警告：缺失{len(missing_features)}个特征")
-        print("缺失的特征将以0填充")
-
+        # 缺失的特征用0填充
         for feature in missing_features:
-            new_features[feature] = 0
+            test_features[feature] = 0
 
-    # 选择特征
-    x_new = new_features[selected_features]
+    if extra_features:
+        print(f"移除{len(extra_features)}个多余特征")
+        test_features = test_features.drop(columns=list(extra_features))
+
+    # 按正确的顺序选择特征
+    x_test = test_features[selected_features]
 
     # 标准化
-    x_new_scaled = scaler.transform(x_new)
+    x_test_scaled = scaler.transform(x_test)
 
     # 预测
     print("进行预测...")
-    predictions = model.predict(x_new_scaled)
+    predictions = model.predict(x_test_scaled)
 
     # 创建结果DataFrame
     result_df = pd.DataFrame({
-        'Time': new_data['Time'],
+        'Time': test_merged_data['Time'],
         'Predicted_Return5min': predictions
     })
 
@@ -976,9 +995,16 @@ def predict_new_data(new_data_path, model_path='final_stock_model.pkl',
     print(f"预测完成！结果已保存到 'predictions.csv'")
     print(f"预测了{len(result_df)}个时间点")
 
+    # 显示统计信息
+    print("\n预测结果统计：")
+    print(f"  最小值: {predictions.min():.6f}")
+    print(f"  最大值: {predictions.max():.6f}")
+    print(f"  平均值: {predictions.mean():.6f}")
+    print(f"  标准差: {predictions.std():.6f}")
+
     # 显示前几个预测结果
-    print("\n前5个预测结果：")
-    print(result_df.head())
+    print("\n前10个预测结果：")
+    print(result_df.head(10))
 
     return result_df
 
@@ -1004,8 +1030,7 @@ if __name__ == "__main__":
         main_enhanced()
     elif choice == '2':
         # 预测模式
-        # 请修改这里的文件路径为您的测试数据路径
-        test_file_path = 'data/A.csv'  # 您的测试数据文件
+        test_file_path = 'test_data/1/'
         predict_new_data(test_file_path)
     else:
         print("输入错误，请输入1或2")
