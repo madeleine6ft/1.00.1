@@ -857,10 +857,13 @@ def main_enhanced():
     # 7. 训练最终模型
     if avg_ic > 0.1:
         print("\n[步骤6] 训练最终模型")
-        final_scaler = StandardScaler()
-        x_scaled = final_scaler.fit_transform(x)
+        from sklearn.preprocessing import StandardScaler
+        x_scaler = StandardScaler()
+        x_scaled = x_scaler.fit_transform(x)
+        y_scaler = StandardScaler()
+        y_scaled = y_scaler.fit_transform(y.values.reshape(-1, 1)).flatten()
 
-        train_data = lgb.Dataset(x_scaled, label=y)
+        train_data = lgb.Dataset(x_scaled, label=y_scaled)
 
         final_model = lgb.train(
             {
@@ -889,7 +892,8 @@ def main_enhanced():
         # 保存模型
         import joblib
         joblib.dump(final_model, 'final_stock_model_enhanced.pkl')
-        joblib.dump(final_scaler, 'scaler_enhanced.pkl')
+        joblib.dump(x_scaler, 'scaler_enhanced.pkl')
+        joblib.dump(y_scaler, 'target_scaler_enhanced.pkl')
         joblib.dump(selected_features, 'selected_features_enhanced.pkl')
 
         print("\n模型训练完成！IC有明显提升。")
@@ -982,7 +986,9 @@ def predict_new_data(test_data_dir='test_data/1/', model_path='final_stock_model
 
     # 预测
     print("进行预测...")
-    predictions = model.predict(x_test_scaled)
+    predictions_scaled = model.predict(x_test_scaled)
+    target_scaler = joblib.load('target_scaler_enhanced.pkl')
+    predictions = target_scaler.inverse_transform(predictions_scaled.reshape(-1, 1)).flatten()
 
     # 创建结果DataFrame
     result_df = pd.DataFrame({

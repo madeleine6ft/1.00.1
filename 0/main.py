@@ -902,12 +902,7 @@ def main_enhanced():
 # ============ 第八部分：预测新数据函数 ============
 def predict_new_data(test_data_dir='test_data/1/', model_path='final_stock_model_enhanced.pkl',
                      scaler_path='scaler_enhanced.pkl', features_path='selected_features_enhanced.pkl'):
-    """
-    预测新数据 - 支持五只股票数据
 
-    参数：
-    test_data_dir: 测试数据目录，应包含A.csv, B.csv, C.csv, D.csv, E.csv
-    """
     print("\n" + "=" * 60)
     print("开始预测新数据")
     print("=" * 60)
@@ -917,7 +912,8 @@ def predict_new_data(test_data_dir='test_data/1/', model_path='final_stock_model
 
     print("加载模型和文件...")
     model = joblib.load(model_path)
-    scaler = joblib.load(scaler_path)
+    x_scaler = joblib.load(scaler_path)
+    target_scaler = joblib.load('target_scaler_enhanced.pkl')
     selected_features = joblib.load(features_path)
 
     # 加载五只股票的测试数据（与训练相同格式）
@@ -978,10 +974,9 @@ def predict_new_data(test_data_dir='test_data/1/', model_path='final_stock_model
     x_test = test_features[selected_features]
 
     # 标准化
-    x_test_scaled = scaler.transform(x_test)
+    x_test_scaled = x_scaler.transform(x_test)
 
     # 预测
-    print("进行预测...")
     predictions = model.predict(x_test_scaled)
 
     # 创建结果DataFrame
@@ -993,18 +988,6 @@ def predict_new_data(test_data_dir='test_data/1/', model_path='final_stock_model
     # 保存结果
     result_df.to_csv('predictions.csv', index=False)
     print(f"预测完成！结果已保存到 'predictions.csv'")
-    print(f"预测了{len(result_df)}个时间点")
-
-    # 显示统计信息
-    print("\n预测结果统计：")
-    print(f"  最小值: {predictions.min():.6f}")
-    print(f"  最大值: {predictions.max():.6f}")
-    print(f"  平均值: {predictions.mean():.6f}")
-    print(f"  标准差: {predictions.std():.6f}")
-
-    # 显示前几个预测结果
-    print("\n前10个预测结果：")
-    print(result_df.head(10))
 
     return result_df
 
