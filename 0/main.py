@@ -913,7 +913,7 @@ def predict_new_data(test_data_dir='test_data/1/', model_path='final_stock_model
     print("加载模型和文件...")
     model = joblib.load(model_path)
     x_scaler = joblib.load(scaler_path)
-    target_scaler = joblib.load('target_scaler_enhanced.pkl')
+    # target_scaler = joblib.load('target_scaler_enhanced.pkl')
     selected_features = joblib.load(features_path)
 
     # 加载五只股票的测试数据（与训练相同格式）
