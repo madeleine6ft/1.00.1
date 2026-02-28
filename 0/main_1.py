@@ -32,13 +32,13 @@ def load_stock_data(stock_name, file_path):
     .csv->dataframe
     改列名（+ABCDE,#target）
     """
-    print(f"正在加载{stock_name}股数据...")
+    #print(f"正在加载{stock_name}股数据...")
 
     # 读取CSV文件
     df = pd.read_csv(file_path)
 
     # 检查列名
-    print(f"  原始列名: {df.columns.tolist()[:5]}...")
+    #print(f"  原始列名: {df.columns.tolist()[:5]}...")
 
     # 为所有列添加前缀（除了Time）
     rename_dict = {}
@@ -56,7 +56,7 @@ def load_stock_data(stock_name, file_path):
     df = df.rename(columns=rename_dict)
 
     # 显示处理后的列名
-    print(f"  处理后的列名示例: {[col for col in df.columns if 'Return5min' in col or col == 'target']}")
+    #print(f"  处理后的列名示例: {[col for col in df.columns if 'Return5min' in col or col == 'target']}")
 
     return df
 
@@ -72,11 +72,12 @@ def merge_all_stocks(data_config):
         df = load_stock_data(stock, path)
 
         # 打印关键列，确认处理正确
-        #这是何意味
         if 'target' in df.columns:
-            print(f"  {stock}股: 找到target列")
+            pass
+            #print(f"  {stock}股: 找到target列")
         if f'{stock}_Return5min' in df.columns:
-            print(f"  {stock}股: 找到{stock}_Return5min列")
+            pass
+            #print(f"  {stock}股: 找到{stock}_Return5min列")
 
         all_dfs.append(df)
 
@@ -88,12 +89,12 @@ def merge_all_stocks(data_config):
 
     merged_df = reduce(merge_func, all_dfs)
 
-    print(f"合并完成，总数据形状：{merged_df.shape}")
-    print(f"列名数量：{len(merged_df.columns)}")
+    #print(f"合并完成，总数据形状：{merged_df.shape}")
+    #print(f"列名数量：{len(merged_df.columns)}")
 
     # 显示包含Return5min的列，确认没有重复
     return_cols = [col for col in merged_df.columns if 'Return5min' in col or 'target' in col]
-    print(f"收益率相关列：{return_cols}")
+    #print(f"收益率相关列：{return_cols}")
 
     return merged_df
 
@@ -473,13 +474,13 @@ def add_e_specific_features(stock_features_dict):
 
 def create_all_features_enhanced(df):
     """增强版特征创建features+target"""
-    print("开始创建增强版特征...")
+    #print("开始创建增强版特征...")
 
     stock_features_dict = {}
 
     # 为每只股票创建增强特征
     for stock in ['A', 'B', 'C', 'D', 'E']:
-        print(f"  创建{stock}股增强特征...")
+        #print(f"  创建{stock}股增强特征...")
         # 增强特征
         features = enhanced_stock_features(df, f'{stock}_')
         stock_features_dict.update(features)
@@ -493,16 +494,16 @@ def create_all_features_enhanced(df):
                 stock_features_dict.update(processed_ma)
 
     # 添加E股特定特征
-    print("  添加E股特定特征...")
+    #print("  添加E股特定特征...")
     e_specific_features = add_e_specific_features(stock_features_dict)
     stock_features_dict.update(e_specific_features)
 
     # 创建板块特征
-    print("  创建增强版板块特征...")
+    #print("  创建增强版板块特征...")
     sector_features = enhanced_sector_features(stock_features_dict)
 
     # 创建极简时间特征
-    print("  创建极简时间特征...")
+    #print("  创建极简时间特征...")
     time_features = enhanced_time_features(df['Time'])
 
     # 合并所有特征
@@ -515,15 +516,16 @@ def create_all_features_enhanced(df):
     if target_col_name in df.columns:
         all_features['target'] = df[target_col_name]
     else:
-        print("错误: 没有找到目标列!")
+        #print("错误: 没有找到目标列!")
         all_features['target'] = 0
 
     # 缺失值处理
     all_features = all_features.ffill().bfill().fillna(0)
 
-    print(f"增强特征创建完成，最终{len(all_features)}行，{len(all_features.columns)}个特征")
+    #print(f"增强特征创建完成，最终{len(all_features)}行，{len(all_features.columns)}个特征")
 
-    return all_features
+    #print(all_features.iloc[[-1]])
+    return all_features.iloc[[-1]]
 
 
 def feature_post_processing(features_df):
@@ -544,25 +546,25 @@ def feature_post_processing(features_df):
 
     to_drop = list(set(to_drop))
     if to_drop:
-        print(f"  移除{len(to_drop)}个高相关性特征")
+        #print(f"  移除{len(to_drop)}个高相关性特征")
         features_df = features_df.drop(columns=to_drop)
 
     # 2. 移除方差过小的特征
     variances = features_df.var()
     low_var_features = variances[variances < 1e-8].index.tolist()
     if low_var_features:
-        print(f"  移除{len(low_var_features)}个低方差特征")
+        #print(f"  移除{len(low_var_features)}个低方差特征")
         features_df = features_df.drop(columns=low_var_features)
 
     # 4. 板块特征专门处理（新增部分）
-    print("  4. 处理板块特征...")
+    #print("  4. 处理板块特征...")
 
     # 4.1 识别板块特征
     sector_cols = [col for col in features_df.columns if any(x in col for x in [
         '_lead_', '_corr_', 'sector_', 'E_sector', 'A_', 'B_', 'C_', 'D_'
     ]) and col not in ['target']]
 
-    print(f"    找到{len(sector_cols)}个板块相关特征")
+    #print(f"    找到{len(sector_cols)}个板块相关特征")
 
     if sector_cols:
 
@@ -570,10 +572,10 @@ def feature_post_processing(features_df):
         return_cols = [col for col in sector_cols if '_return' in col]
         if len(return_cols) >= 2:
             features_df['sector_return_composite'] = features_df[return_cols].mean(axis=1)
-            print(f"    创建了板块收益率综合特征，基于{len(return_cols)}个特征")
+            #print(f"    创建了板块收益率综合特征，基于{len(return_cols)}个特征")
 
     # 6. 最终检查和处理
-    print("  6. 最终检查...")
+    #print("  6. 最终检查...")
 
     # 移除与target相关性为NaN的特征
     if 'target' in features_df.columns:
@@ -582,14 +584,14 @@ def feature_post_processing(features_df):
         nan_corr_features = [f for f in nan_corr_features if f != 'target']
 
         if nan_corr_features:
-            print(f"    移除{len(nan_corr_features)}个与目标相关性为NaN的特征")
+            #print(f"    移除{len(nan_corr_features)}个与目标相关性为NaN的特征")
             features_df = features_df.drop(columns=nan_corr_features)
 
     # 确保没有inf或NaN值
     features_df = features_df.replace([np.inf, -np.inf], np.nan)
     features_df = features_df.fillna(0)
 
-    print(f"  后处理完成，最终特征数: {len(features_df.columns)}")
+    #print(f"  后处理完成，最终特征数: {len(features_df.columns)}")
     return features_df
 
 
@@ -957,35 +959,40 @@ def main_enhanced():
 # ============ 第八部分：预测新数据函数 ============
 def predict_new_data(self, E_row, sector_rows):
     [A_row,B_row,C_row,D_row] = sector_rows
-    print("\n" + "=" * 60)
-    print("开始预测新数据")
-    print("=" * 60)
+    #print("\n" + "=" * 60)
+    #print("开始预测新数据")
+    #print("=" * 60)
 
     # 合并五只股票数据（使用训练时的相同函数）
-    print("合并五只股票测试数据，写成一行...")
+    #print("合并五只股票测试数据，写成一行...")
     test_merged_data = merge_all_stocks_one_line(A_row,B_row,C_row,D_row,E_row)#只有一行五个股票的数据
     self.whole_dataframe=pd.concat((self.whole_dataframe,test_merged_data)).reset_index(drop=True)
 
     self.whole_dataframe.to_csv("whole_data.csv", index=False)
+
+    #只保留最近15min的数据（即1800行）
+    if len(self.whole_dataframe) > 1800:
+        self.whole_dataframe=self.whole_dataframe.iloc[1:]
+
     # 为新数据创建特征（使用与训练相同的特征工程）
-    print("为新数据创建特征...")
-    test_features = create_all_features_enhanced(test_merged_data)
+    #print("为新数据创建特征...")
+    test_features = create_all_features_enhanced(self.whole_dataframe)
 
     # 确保特征一致
     missing_features = set(self.selected_features) - set(test_features.columns)
     extra_features = set(test_features.columns) - set(self.selected_features)
 
-    print(f"测试数据特征数: {len(test_features.columns)}")
-    print(f"模型需要特征数: {len(self.selected_features)}")
+    #print(f"测试数据特征数: {len(test_features.columns)}")
+    #print(f"模型需要特征数: {len(self.selected_features)}")
 
     if missing_features:
-        print(f"警告：缺失{len(missing_features)}个特征")
+        #print(f"警告：缺失{len(missing_features)}个特征")
         # 缺失的特征用0填充
         for feature in missing_features:
             test_features[feature] = 0
 
     if extra_features:
-        print(f"移除{len(extra_features)}个多余特征")
+        #print(f"移除{len(extra_features)}个多余特征")
         test_features = test_features.drop(columns=list(extra_features))
 
     # 按正确的顺序选择特征
@@ -998,31 +1005,32 @@ def predict_new_data(self, E_row, sector_rows):
     predictions = self.model.predict(x_test_scaled)
 
     # 创建结果DataFrame
-    result_df = pd.DataFrame({
-        'Time': test_merged_data['Time'],
-        'Predicted_Return5min': predictions
-    })
+    # result_df = pd.DataFrame({
+    #     'Time': test_merged_data['Time'],
+    #     'Predicted_Return5min': predictions
+    # })
 
     # 保存结果
-    result_df.to_csv('predictions.csv', index=False)
-    print(f"预测完成！结果已保存到 'predictions.csv'")
 
-    return result_df
+    #print("预测完成")
+
+    return predictions[0]
 
 def load_stock_data_one_line(row,stock_name):
     """
     .csv->dataframe
     改列名（+ABCDE,#target）
     """
-    print(f"正在加载{stock_name}股数据...")
+    #print(f"正在加载{stock_name}股数据...")
 
     # 读取CSV文件
     df = row.to_frame().T
-    print(df)
+    #print(df)
 
     # 检查列名
-    print(f"  原始列名: {df.columns.tolist()[:5]}...")
+    #print(f"  原始列名: {df.columns.tolist()[:5]}...")
 
+    df.drop(columns=['Return5min'], inplace=True, errors='ignore')
     # 为所有列添加前缀（除了Time）
     rename_dict = {}
     for col in df.columns:
@@ -1039,7 +1047,7 @@ def load_stock_data_one_line(row,stock_name):
     df = df.rename(columns=rename_dict)
 
     # 显示处理后的列名
-    print(f"  处理后的列名示例: {[col for col in df.columns if 'Return5min' in col or col == 'target']}")
+    #print(f"  处理后的列名示例: {[col for col in df.columns if 'Return5min' in col or col == 'target']}")
 
     return df
 
@@ -1048,7 +1056,7 @@ def merge_all_stocks_one_line(A_row,B_row,C_row,D_row,E_row):
     """
     合并五只股票的数据 - 修正版
     """
-    print("开始合并五只股票数据...")
+    #print("开始合并五只股票数据...")
 
     all_dfs = []
 
@@ -1063,7 +1071,7 @@ def merge_all_stocks_one_line(A_row,B_row,C_row,D_row,E_row):
     all_dfs.append(df)
     df = load_stock_data_one_line(E_row,'E')
     all_dfs.append(df)
-    print(all_dfs)
+    #print(all_dfs)
     # 使用reduce逐步合并 concat?
     from functools import reduce
 
@@ -1072,12 +1080,12 @@ def merge_all_stocks_one_line(A_row,B_row,C_row,D_row,E_row):
 
     merged_df = reduce(merge_func, all_dfs)
 
-    print(f"合并完成，总数据形状：{merged_df.shape}")
-    print(f"列名数量：{len(merged_df.columns)}")
+    #print(f"合并完成，总数据形状：{merged_df.shape}")
+    #print(f"列名数量：{len(merged_df.columns)}")
 
     # 显示包含Return5min的列，确认没有重复
     return_cols = [col for col in merged_df.columns if 'Return5min' in col or 'target' in col]
-    print(f"收益率相关列：{return_cols}")
+    #print(f"收益率相关列：{return_cols}")
 
     return merged_df
 

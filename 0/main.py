@@ -27,7 +27,8 @@ def run_test():
                 day_data['C'].iloc[tick_index],
                 day_data['D'].iloc[tick_index]
             ]
-
+            if tick_index %100==0:
+                print(tick_index)
             ###########Predict
             my_preds[tick_index] = model.online_predict(E_row_data, sector_row_datas)
 
