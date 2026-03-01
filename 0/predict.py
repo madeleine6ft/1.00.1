@@ -312,10 +312,13 @@ def enhanced_stock_features(df, stock_prefix):
             features[f'{stock_prefix}divergence_5min'] = divergence_5min.astype(int)
 
         # 4. 收益率波动率（使用1期收益率）
-        ret_1 = df[last_price_col].pct_change()
-        features[f'{stock_prefix}ret_volatility_10'] = ret_1.rolling(10).std()
-        features[f'{stock_prefix}ret_volatility_20'] = ret_1.rolling(20).std()
-        features[f'{stock_prefix}ret_volatility_30'] = ret_1.rolling(30).std()
+        ret_1 = []
+        price = df[last_price_col]
+        for i in range(0,30):
+            ret_1.append(price[i-30] - price[i-31])/price[i-31]
+        features[f'{stock_prefix}ret_volatility_10'] = ret_1[-10:].std()
+        features[f'{stock_prefix}ret_volatility_20'] = ret_1[-20:].std()
+        features[f'{stock_prefix}ret_volatility_30'] = ret_1[-30:].std()
 
     # === 成交量特征 ===
     # 成交量加权价格
