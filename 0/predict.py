@@ -164,13 +164,13 @@ def enhanced_stock_features(df, stock_prefix):
         # === 价格趋势特征 ===
         # 1. 价格动量（短期、中期）
         for period in [5, 10, 20, 30, 60, 120]:  # 增加更多时间尺度
-            features[f'{stock_prefix}price_momentum_{period}'] = df[last_price_col].pct_change(periods=period)
+            features[f'{stock_prefix}price_momentum_{period}'] = (df[last_price_col].iloc[-1] - df[last_price_col].iloc[-1-period]) / df[last_price_col].iloc[-1-period]
             #那这里最前面的几个值就NAN了是嘛（
 
         # 2. 价格波动范围
         for window in [60, 120, 300, 600]:  # 30秒到5分钟
-            roll_max = df[last_price_col].rolling(window).max()
-            roll_min = df[last_price_col].rolling(window).min()
+            roll_max = df[last_price_col].tail(window).max()
+            roll_min = df[last_price_col].tail(window).min()
             features[f'{stock_prefix}price_range_{window}'] = (roll_max - roll_min) / (roll_min + 1e-8)#何意味避免0嘛
 
         # 3. 移动平均线特征
@@ -190,7 +190,7 @@ def enhanced_stock_features(df, stock_prefix):
             ma_key = f'{stock_prefix}ma_{name}'
             # 使用适当的min_periods避免开头太多NaN(window中大于等于min_periods个数不为NAN，rolling就不为NAN)
             min_periods = max(1, int(window * 0.1))
-            ma_dict[name] = df[last_price_col].rolling(window, min_periods=min_periods).mean()
+            ma_dict[name] = df[last_price_col].tail(window, min_periods=min_periods).mean()
             features[ma_key] = ma_dict[name]
 
         # 2. 价格相对于移动平均线的位置（核心特征）
@@ -198,7 +198,7 @@ def enhanced_stock_features(df, stock_prefix):
         for name in ['30s', '1min', '5min', '10min']:
             if name in ma_dict:#意义何在
                 ma_value = ma_dict[name]
-                price = df[last_price_col]
+                price = df[last_price_col].iloc[-1]
                 features[f'{stock_prefix}price_vs_ma_{name}_pct'] = (price - ma_value) / (ma_value + 1e-8)
 
                 # 价格是否在MA之上（布尔特征）
@@ -207,17 +207,17 @@ def enhanced_stock_features(df, stock_prefix):
         # 3. 移动平均线的趋势特征（MA的斜率）
         # 计算各MA在一段时间内的变化率
         for name in ['1min', '5min', '10min']:
-            if name in ma_dict:
-                ma_value = ma_dict[name]
-                # 短期变化：最近1分钟的变化
-                change_1min = ma_value - ma_value.shift(120)
-                features[f'{stock_prefix}ma_{name}_change_1min'] = change_1min / (ma_value.shift(120) + 1e-8)
+            ma_value = ma_dict[name]
+            # 短期变化：最近1分钟的变化
+            ma_value_before_1min = df[f'{stock_prefix}ma_{name}'].iloc[-120]
+            change_1min = ma_value - ma_value_before_1min
+            features[f'{stock_prefix}ma_{name}_change_1min'] = change_1min / (ma_value_before_1min + 1e-8)
 
-                # 长期变化：与自身相比（MA自己的变化趋势）
-                # 使用EMA计算趋势强度，避免噪声
-                ema_short = ma_value.ewm(span=60, adjust=False).mean()
-                ema_long = ma_value.ewm(span=300, adjust=False).mean()
-                features[f'{stock_prefix}ma_{name}_trend_strength'] = (ema_short - ema_long) / (ema_long + 1e-8)
+            # 长期变化：与自身相比（MA自己的变化趋势）
+            # 使用EMA计算趋势强度，避免噪声
+            ema_short = ma_value.ewm(span=60, adjust=False).mean()
+            ema_long = ma_value.ewm(span=300, adjust=False).mean()
+            features[f'{stock_prefix}ma_{name}_trend_strength'] = (ema_short - ema_long) / (ema_long + 1e-8)
 
         # 4. 金叉死叉特征（技术分析核心）
         if all(name in ma_dict for name in ['30s', '1min', '5min']):
@@ -350,380 +350,6 @@ def enhanced_stock_features(df, stock_prefix):
     return features
 
 
-
-
-def enhanced_stock_features_one_line(df, stock_prefix):
-    """增强版股票特征（直接计算最后一行的特征值，不生成完整序列）"""
-    features = {}
-    # 获取最后一行的索引位置
-    last_idx = df.index[-1]
-    # 获取数据的数值数组（方便快速索引）
-    df_vals = df.reset_index(drop=True)
-
-    # 基础价格列
-    last_price_col = f'{stock_prefix}LastPrice'
-
-    if last_price_col in df.columns:
-        # 获取价格数据的数值数组（仅保留需要的列）
-        price_vals = df_vals[last_price_col].values
-        n_rows = len(price_vals)
-
-        # === 价格趋势特征 ===
-        # 1. 价格动量（短期、中期）- 直接计算最后一个值
-        for period in [5, 10, 20, 30, 60, 120]:
-            if n_rows > period:
-                # 只取最后一个值和period步前的值计算
-                current_price = price_vals[-1]
-                prev_price = price_vals[-1 - period]
-                momentum = (current_price - prev_price) / prev_price
-            else:
-                momentum = np.nan  # 数据不足时返回NaN
-            features[f'{stock_prefix}price_momentum_{period}'] = momentum
-
-        # 2. 价格波动范围 - 直接计算最后一个窗口的最值
-        for window in [60, 120, 300, 600]:
-            if n_rows >= window:
-                # 只取最后window行计算最值
-                window_prices = price_vals[-window:]
-                roll_max = np.max(window_prices)
-                roll_min = np.min(window_prices)
-                price_range = (roll_max - roll_min) / (roll_min + 1e-8)
-            elif n_rows > 0:
-                # 数据不足时用已有数据计算
-                window_prices = price_vals[:]
-                roll_max = np.max(window_prices)
-                roll_min = np.min(window_prices)
-                price_range = (roll_max - roll_min) / (roll_min + 1e-8)
-            else:
-                price_range = np.nan
-            features[f'{stock_prefix}price_range_{window}'] = price_range
-
-        # 3. 移动平均线特征
-        ma_windows = {
-            '30s': 60,  # 30秒
-            '1min': 120,  # 1分钟
-            '2min': 240,  # 2分钟
-            '3min': 360,  # 3分钟
-            '5min': 600,  # 5分钟
-            '10min': 1200,  # 10分钟
-            '15min': 1800,  # 15分钟
-        }
-
-        # 1. 计算所有移动平均线（仅计算最后一个值）
-        ma_dict = {}
-        current_price = price_vals[-1] if n_rows > 0 else np.nan
-        for name, window in ma_windows.items():
-            ma_key = f'{stock_prefix}ma_{name}'
-            min_periods = max(1, int(window * 0.1))
-
-            if n_rows >= min_periods:
-                # 只取需要的窗口数据计算均值
-                calc_window = min(window, n_rows)
-                window_prices = price_vals[-calc_window:]
-                ma_value = np.mean(window_prices)
-            else:
-                ma_value = np.nan
-
-            ma_dict[name] = ma_value
-            features[ma_key] = ma_value
-
-        # 2. 价格相对于移动平均线的位置（核心特征）
-        for name in ['30s', '1min', '5min', '10min']:
-            if name in ma_dict and not np.isnan(ma_dict[name]) and not np.isnan(current_price):
-                ma_value = ma_dict[name]
-                # 偏离度 = (价格 - MA) / MA
-                price_vs_ma_pct = (current_price - ma_value) / (ma_value + 1e-8)
-                features[f'{stock_prefix}price_vs_ma_{name}_pct'] = price_vs_ma_pct
-
-                # 价格是否在MA之上（布尔特征转数值）
-                above_ma = 1 if current_price > ma_value else 0
-                features[f'{stock_prefix}above_ma_{name}'] = above_ma
-
-        # 3. 移动平均线的趋势特征（MA的斜率）
-        for name in ['1min', '5min', '10min']:
-            if name in ma_dict and not np.isnan(ma_dict[name]):
-                window = ma_windows[name]
-                current_ma = ma_dict[name]
-
-                # 短期变化：最近1分钟的变化（计算120步前的MA值）
-                if n_rows > window + 120:
-                    # 取120步前的窗口计算MA
-                    prev_window_start = -window - 120
-                    prev_window_end = -120
-                    prev_window_prices = price_vals[prev_window_start:prev_window_end]
-                    prev_ma = np.mean(prev_window_prices)
-                    change_1min = (current_ma - prev_ma) / (prev_ma + 1e-8)
-                else:
-                    change_1min = 0.0
-
-                features[f'{stock_prefix}ma_{name}_change_1min'] = change_1min
-
-                # 长期变化：EMA趋势强度（直接计算最后一个EMA值）
-                if n_rows >= 300:
-                    # 计算EMA的简化方法（直接计算最后值）
-                    def calculate_ema(values, span):
-                        alpha = 2 / (span + 1)
-                        ema = [values[0]]
-                        for val in values[1:]:
-                            ema.append(alpha * val + (1 - alpha) * ema[-1])
-                        return ema[-1]
-
-                    # 只取需要的窗口计算EMA
-                    calc_window = min(300, n_rows)
-                    window_prices = price_vals[-calc_window:]
-
-                    ema_short = calculate_ema(window_prices, 60)
-                    ema_long = calculate_ema(window_prices, 300)
-                    trend_strength = (ema_short - ema_long) / (ema_long + 1e-8)
-                else:
-                    trend_strength = 0.0
-
-                features[f'{stock_prefix}ma_{name}_trend_strength'] = trend_strength
-
-        # 4. 金叉死叉特征（技术分析核心）
-        if all(name in ma_dict for name in ['30s', '1min', '5min']):
-            ma_30s = ma_dict['30s']
-            ma_1min = ma_dict['1min']
-            ma_5min = ma_dict['5min']
-
-            if not any(np.isnan([ma_30s, ma_1min, ma_5min])):
-                # 4.1 基本金叉死叉信号（判断当前和前一步的状态）
-                # 获取前一步的MA值
-                def get_prev_ma(name):
-                    window = ma_windows[name]
-                    if n_rows > window + 1:
-                        calc_window = min(window, n_rows - 1)
-                        prev_window_prices = price_vals[-window - 1:-1]
-                        return np.mean(prev_window_prices)
-                    return ma_dict[name]
-
-                prev_ma_30s = get_prev_ma('30s')
-                prev_ma_1min = get_prev_ma('1min')
-                prev_ma_5min = get_prev_ma('5min')
-
-                # 30秒线上穿1分钟线
-                cross_up_30s_1min = 1 if (ma_30s > ma_1min) and (prev_ma_30s <= prev_ma_1min) else 0
-                cross_down_30s_1min = 1 if (ma_30s < ma_1min) and (prev_ma_30s >= prev_ma_1min) else 0
-
-                # 1分钟线上穿5分钟线（传统金叉）
-                cross_up_1min_5min = 1 if (ma_1min > ma_5min) and (prev_ma_1min <= prev_ma_5min) else 0
-                cross_down_1min_5min = 1 if (ma_1min < ma_5min) and (prev_ma_1min >= prev_ma_5min) else 0
-
-                features[f'{stock_prefix}cross_up_30s_1min'] = cross_up_30s_1min
-                features[f'{stock_prefix}cross_down_30s_1min'] = cross_down_30s_1min
-                features[f'{stock_prefix}cross_up_1min_5min'] = cross_up_1min_5min
-                features[f'{stock_prefix}cross_down_1min_5min'] = cross_down_1min_5min
-
-                # 4.2 金叉/死叉后的时间（事件驱动特征）
-                # 简化版：遍历历史找最后一次金叉位置（只遍历必要数据）
-                max_lookback = min(1800, n_rows)  # 最多回溯15分钟
-                price_history = price_vals[-max_lookback:]
-
-                # 预计算历史MA值
-                def calc_ma_history(prices, window):
-                    ma_history = []
-                    for i in range(len(prices)):
-                        if i + 1 >= max(1, int(window * 0.1)):
-                            calc_win = min(window, i + 1)
-                            ma_val = np.mean(prices[i - calc_win + 1:i + 1])
-                            ma_history.append(ma_val)
-                        else:
-                            ma_history.append(np.nan)
-                    return ma_history
-
-                ma1_history = calc_ma_history(price_history, ma_windows['1min'])
-                ma5_history = calc_ma_history(price_history, ma_windows['5min'])
-
-                # 找最后一次金叉/死叉
-                last_cross_up = -1
-                last_cross_down = -1
-
-                for i in range(1, len(ma1_history)):
-                    if np.isnan(ma1_history[i]) or np.isnan(ma5_history[i]) or \
-                            np.isnan(ma1_history[i - 1]) or np.isnan(ma5_history[i - 1]):
-                        continue
-
-                    # 金叉：1min上穿5min
-                    if ma1_history[i] > ma5_history[i] and ma1_history[i - 1] <= ma5_history[i - 1]:
-                        last_cross_up = i
-                    # 死叉：1min下穿5min
-                    elif ma1_history[i] < ma5_history[i] and ma1_history[i - 1] >= ma5_history[i - 1]:
-                        last_cross_down = i
-
-                # 计算距离上次金叉/死叉的时间
-                if last_cross_up != -1:
-                    ticks_since_up = len(price_history) - 1 - last_cross_up
-                else:
-                    ticks_since_up = 9999
-
-                if last_cross_down != -1:
-                    ticks_since_down = len(price_history) - 1 - last_cross_down
-                else:
-                    ticks_since_down = 9999
-
-                features[f'{stock_prefix}ticks_since_up_1min_5min'] = ticks_since_up
-                features[f'{stock_prefix}ticks_since_down_1min_5min'] = ticks_since_down
-
-                # 4.3 均线排列状态（多头/空头排列）
-                bull_alignment = 1 if (ma_30s > ma_1min) and (ma_1min > ma_5min) else 0
-                bear_alignment = 1 if (ma_30s < ma_1min) and (ma_1min < ma_5min) else 0
-
-                features[f'{stock_prefix}bull_alignment'] = bull_alignment
-                features[f'{stock_prefix}bear_alignment'] = bear_alignment
-
-                # 排列强度
-                ma_diff_30s_1min = (ma_30s - ma_1min) / (ma_1min + 1e-8)
-                ma_diff_1min_5min = (ma_1min - ma_5min) / (ma_5min + 1e-8)
-                alignment_strength = ma_diff_30s_1min + ma_diff_1min_5min
-                features[f'{stock_prefix}alignment_strength'] = alignment_strength
-
-        # 5. 移动平均线带宽特征（MA间的距离）
-        if all(name in ma_dict for name in ['30s', '5min']):
-            ma_30s = ma_dict['30s']
-            ma_5min = ma_dict['5min']
-
-            if not any(np.isnan([ma_30s, ma_5min])):
-                # 带宽 = (短期MA - 长期MA) / 长期MA
-                ma_bandwidth = (ma_30s - ma_5min) / (ma_5min + 1e-8)
-                features[f'{stock_prefix}ma_bandwidth'] = ma_bandwidth
-
-                # 带宽的变化率（1分钟变化）
-                if n_rows > ma_windows['5min'] + 120:
-                    # 计算120步前的带宽
-                    prev_30s_window = price_vals[-ma_windows['30s'] - 120:-120]
-                    prev_30s_ma = np.mean(prev_30s_window)
-                    prev_5min_window = price_vals[-ma_windows['5min'] - 120:-120]
-                    prev_5min_ma = np.mean(prev_5min_window)
-                    prev_bandwidth = (prev_30s_ma - prev_5min_ma) / (prev_5min_ma + 1e-8)
-                    bandwidth_change = ma_bandwidth - prev_bandwidth
-                else:
-                    bandwidth_change = 0.0
-
-                features[f'{stock_prefix}ma_bandwidth_change'] = bandwidth_change
-
-        # 6. 价格与MA的背离特征
-        if all(name in ma_dict for name in ['1min', '5min']):
-            ma_1min = ma_dict['1min']
-            ma_5min = ma_dict['5min']
-
-            if not any(np.isnan([current_price, ma_1min, ma_5min])) and n_rows > 60:
-                # 计算价格和MA的动量（30秒变化）
-                price_30s_ago = price_vals[-61]  # 60步前的价格
-                price_momentum = current_price - price_30s_ago
-
-                # 计算60步前的MA值
-                ma1_60s_ago_window = price_vals[-ma_windows['1min'] - 60:-60]
-                ma1_60s_ago = np.mean(ma1_60s_ago_window) if len(ma1_60s_ago_window) >= max(1, int(
-                    ma_windows['1min'] * 0.1)) else ma_1min
-                ma_1min_momentum = ma_1min - ma1_60s_ago
-
-                ma5_60s_ago_window = price_vals[-ma_windows['5min'] - 60:-60]
-                ma5_60s_ago = np.mean(ma5_60s_ago_window) if len(ma5_60s_ago_window) >= max(1, int(
-                    ma_windows['5min'] * 0.1)) else ma_5min
-                ma_5min_momentum = ma_5min - ma5_60s_ago
-
-                # 背离判断
-                divergence_1min = 1 if ((price_momentum > 0) & (ma_1min_momentum < 0)) | (
-                            (price_momentum < 0) & (ma_1min_momentum > 0)) else 0
-                divergence_5min = 1 if ((price_momentum > 0) & (ma_5min_momentum < 0)) | (
-                            (price_momentum < 0) & (ma_5min_momentum > 0)) else 0
-
-                features[f'{stock_prefix}divergence_1min'] = divergence_1min
-                features[f'{stock_prefix}divergence_5min'] = divergence_5min
-
-        # 4. 收益率波动率（使用1期收益率）
-        for window in [10, 20, 30]:
-            if n_rows > window:
-                # 只计算最后window个收益率的标准差
-                rets = []
-                for i in range(-window, 0):
-                    if i - 1 >= -n_rows:
-                        ret = (price_vals[i] - price_vals[i - 1]) / price_vals[i - 1]
-                        rets.append(ret)
-                ret_vol = np.std(rets) if len(rets) > 1 else 0.0
-            else:
-                ret_vol = np.nan
-            features[f'{stock_prefix}ret_volatility_{window}'] = ret_vol
-
-    # === 成交量特征 ===
-    volume_col = f'{stock_prefix}Volume'
-    if last_price_col in df.columns and volume_col in df.columns:
-        price_vals = df_vals[last_price_col].values
-        volume_vals = df_vals[volume_col].values
-        n_rows = len(price_vals)
-        current_price = price_vals[-1] if n_rows > 0 else np.nan
-
-        for window in [120, 600, 1200]:
-            if n_rows >= 1:
-                # 只取最后window行计算VWAP
-                calc_window = min(window, n_rows)
-                window_prices = price_vals[-calc_window:]
-                window_volumes = volume_vals[-calc_window:]
-
-                vwap_numerator = np.sum(window_prices * window_volumes)
-                vwap_denominator = np.sum(window_volumes) + 1e-8
-                vwap = vwap_numerator / vwap_denominator
-
-                features[f'{stock_prefix}vwap_{window}'] = vwap
-                features[f'{stock_prefix}price_vwap_diff_{window}'] = current_price - vwap
-                features[f'{stock_prefix}price_vwap_ratio_{window}'] = current_price / (vwap + 1e-8) - 1
-
-    # === 委托深度特征 ===
-    bid_volume_cols = [f'{stock_prefix}BidVolume{i}' for i in range(1, 6)]
-    ask_volume_cols = [f'{stock_prefix}AskVolume{i}' for i in range(1, 6)]
-
-    if all(col in df.columns for col in bid_volume_cols + ask_volume_cols):
-        # 只取最后一行的委托深度数据
-        last_bid = df_vals[bid_volume_cols].iloc[-1].values
-        last_ask = df_vals[ask_volume_cols].iloc[-1].values
-
-        total_bid_depth = np.sum(last_bid)
-        total_ask_depth = np.sum(last_ask)
-
-        # 5档深度不平衡
-        depth_imbalance = (total_bid_depth - total_ask_depth) / (total_bid_depth + total_ask_depth + 1e-6)
-        features[f'{stock_prefix}depth_imbalance'] = depth_imbalance
-
-        # 深度变化率（120步前的深度）
-        if n_rows > 120:
-            prev_bid = df_vals[bid_volume_cols].iloc[-121].values
-            prev_ask = df_vals[ask_volume_cols].iloc[-121].values
-            prev_bid_total = np.sum(prev_bid)
-            prev_ask_total = np.sum(prev_ask)
-
-            bid_change = (total_bid_depth - prev_bid_total) / (prev_bid_total + 1e-8) if prev_bid_total > 0 else 0
-            ask_change = (total_ask_depth - prev_ask_total) / (prev_ask_total + 1e-8) if prev_ask_total > 0 else 0
-            depth_change = bid_change - ask_change
-        else:
-            depth_change = 0.0
-
-        features[f'{stock_prefix}depth_change'] = depth_change
-
-    # === 订单流不平衡（高级版）===
-    buy_vol_col = f'{stock_prefix}OrderBuyVolume'
-    sell_vol_col = f'{stock_prefix}OrderSellVolume'
-    if buy_vol_col in df.columns and sell_vol_col in df.columns:
-        # 只取最后一行的订单数据
-        last_buy = df_vals[buy_vol_col].iloc[-1]
-        last_sell = df_vals[sell_vol_col].iloc[-1]
-
-        # 订单流不平衡
-        order_imbalance = (last_buy - last_sell) / (last_buy + last_sell + 1e-6)
-        features[f'{stock_prefix}order_imbalance'] = order_imbalance
-
-        # 订单流不平衡MA（120窗口）
-        n_rows = len(df_vals)
-        if n_rows >= 120:
-            buy_vals = df_vals[buy_vol_col].iloc[-120:].values
-            sell_vals = df_vals[sell_vol_col].iloc[-120:].values
-            imb_vals = (buy_vals - sell_vals) / (buy_vals + sell_vals + 1e-6)
-            order_imbalance_ma = np.mean(imb_vals)
-        else:
-            order_imbalance_ma = order_imbalance
-
-        features[f'{stock_prefix}order_imbalance_ma'] = order_imbalance_ma
-
-    return features
 
 
 
