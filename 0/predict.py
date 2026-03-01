@@ -1,11 +1,3 @@
-"""
-股票未来收益率预测模型 - 完整实现代码
-作者：AI助手
-适用：入门级选手
-功能：使用ABCDE五只股票5天的Tick数据，预测股票E未来5分钟收益率
-数据格式：33个字段，如题目所述
-"""
-#在main.py基础上修改，主要改了main_enhanced函数，把特征选择放到交叉验证内部
 
 # ============ 第一部分：导入库 ============
 import pandas as pd
@@ -25,9 +17,67 @@ from scipy.stats import pearsonr, spearmanr  # 计算IC（相关系数）
 
 import matplotlib.pyplot as plt
 
+# ============ 第八部分：预测新数据函数 ============
+def predict_new_data(self, E_row, sector_rows):
+    [A_row,B_row,C_row,D_row] = sector_rows
+    #print("\n" + "=" * 60)
+    #print("开始预测新数据")
+    #print("=" * 60)
 
-# ============ 第二部分：数据加载函数 ============
-def load_stock_data(stock_name, file_path):
+    # 合并五只股票数据（使用训练时的相同函数）
+    #print("合并五只股票测试数据，写成一行...")
+    test_merged_data = merge_all_stocks_one_line(A_row,B_row,C_row,D_row,E_row)#只有一行五个股票的数据
+    self.whole_dataframe=pd.concat((self.whole_dataframe,test_merged_data)).reset_index(drop=True)
+
+    self.whole_dataframe.to_csv("whole_data.csv", index=False)
+
+    #只保留最近15min的数据（即1800行）
+    if len(self.whole_dataframe) > 1800:
+        self.whole_dataframe=self.whole_dataframe.iloc[1:]
+
+    # 为新数据创建特征（使用与训练相同的特征工程）
+    #print("为新数据创建特征...")
+    test_features = create_all_features_enhanced(self.whole_dataframe)
+
+    # 确保特征一致
+    missing_features = set(self.selected_features) - set(test_features.columns)
+    extra_features = set(test_features.columns) - set(self.selected_features)
+
+    #print(f"测试数据特征数: {len(test_features.columns)}")
+    #print(f"模型需要特征数: {len(self.selected_features)}")
+
+    if missing_features:
+        #print(f"警告：缺失{len(missing_features)}个特征")
+        # 缺失的特征用0填充
+        for feature in missing_features:
+            test_features[feature] = 0
+
+    if extra_features:
+        #print(f"移除{len(extra_features)}个多余特征")
+        test_features = test_features.drop(columns=list(extra_features))
+
+    # 按正确的顺序选择特征
+    x_test = test_features[self.selected_features]
+
+    # 标准化
+    x_test_scaled = self.x_scaler.transform(x_test)
+
+    # 预测
+    predictions = self.model.predict(x_test_scaled)
+
+    # 创建结果DataFrame
+    # result_df = pd.DataFrame({
+    #     'Time': test_merged_data['Time'],
+    #     'Predicted_Return5min': predictions
+    # })
+
+    # 保存结果
+
+    #print("预测完成")
+
+    return predictions[0]
+
+def load_stock_data_one_line(row,stock_name):
     """
     .csv->dataframe
     改列名（+ABCDE,#target）
@@ -35,11 +85,13 @@ def load_stock_data(stock_name, file_path):
     #print(f"正在加载{stock_name}股数据...")
 
     # 读取CSV文件
-    df = pd.read_csv(file_path)
+    df = row.to_frame().T
+    #print(df)
 
     # 检查列名
     #print(f"  原始列名: {df.columns.tolist()[:5]}...")
 
+    df.drop(columns=['Return5min'], inplace=True, errors='ignore')
     # 为所有列添加前缀（除了Time）
     rename_dict = {}
     for col in df.columns:
@@ -61,26 +113,26 @@ def load_stock_data(stock_name, file_path):
     return df
 
 
-def merge_all_stocks(data_config):
+def merge_all_stocks_one_line(A_row,B_row,C_row,D_row,E_row):
     """
     合并五只股票的数据 - 修正版
     """
-    print("开始合并五只股票数据...")
+    #print("开始合并五只股票数据...")
 
     all_dfs = []
-    for stock, path in data_config.items():
-        df = load_stock_data(stock, path)
 
-        # 打印关键列，确认处理正确
-        if 'target' in df.columns:
-            pass
-            #print(f"  {stock}股: 找到target列")
-        if f'{stock}_Return5min' in df.columns:
-            pass
-            #print(f"  {stock}股: 找到{stock}_Return5min列")
 
-        all_dfs.append(df)
-
+    df = load_stock_data_one_line(A_row,'A')
+    all_dfs.append(df)
+    df = load_stock_data_one_line(B_row, 'B')
+    all_dfs.append(df)
+    df = load_stock_data_one_line(C_row,'C')
+    all_dfs.append(df)
+    df = load_stock_data_one_line(D_row,'D')
+    all_dfs.append(df)
+    df = load_stock_data_one_line(E_row,'E')
+    all_dfs.append(df)
+    #print(all_dfs)
     # 使用reduce逐步合并 concat?
     from functools import reduce
 
@@ -298,6 +350,383 @@ def enhanced_stock_features(df, stock_prefix):
     return features
 
 
+
+
+def enhanced_stock_features_one_line(df, stock_prefix):
+    """增强版股票特征（直接计算最后一行的特征值，不生成完整序列）"""
+    features = {}
+    # 获取最后一行的索引位置
+    last_idx = df.index[-1]
+    # 获取数据的数值数组（方便快速索引）
+    df_vals = df.reset_index(drop=True)
+
+    # 基础价格列
+    last_price_col = f'{stock_prefix}LastPrice'
+
+    if last_price_col in df.columns:
+        # 获取价格数据的数值数组（仅保留需要的列）
+        price_vals = df_vals[last_price_col].values
+        n_rows = len(price_vals)
+
+        # === 价格趋势特征 ===
+        # 1. 价格动量（短期、中期）- 直接计算最后一个值
+        for period in [5, 10, 20, 30, 60, 120]:
+            if n_rows > period:
+                # 只取最后一个值和period步前的值计算
+                current_price = price_vals[-1]
+                prev_price = price_vals[-1 - period]
+                momentum = (current_price - prev_price) / prev_price
+            else:
+                momentum = np.nan  # 数据不足时返回NaN
+            features[f'{stock_prefix}price_momentum_{period}'] = momentum
+
+        # 2. 价格波动范围 - 直接计算最后一个窗口的最值
+        for window in [60, 120, 300, 600]:
+            if n_rows >= window:
+                # 只取最后window行计算最值
+                window_prices = price_vals[-window:]
+                roll_max = np.max(window_prices)
+                roll_min = np.min(window_prices)
+                price_range = (roll_max - roll_min) / (roll_min + 1e-8)
+            elif n_rows > 0:
+                # 数据不足时用已有数据计算
+                window_prices = price_vals[:]
+                roll_max = np.max(window_prices)
+                roll_min = np.min(window_prices)
+                price_range = (roll_max - roll_min) / (roll_min + 1e-8)
+            else:
+                price_range = np.nan
+            features[f'{stock_prefix}price_range_{window}'] = price_range
+
+        # 3. 移动平均线特征
+        ma_windows = {
+            '30s': 60,  # 30秒
+            '1min': 120,  # 1分钟
+            '2min': 240,  # 2分钟
+            '3min': 360,  # 3分钟
+            '5min': 600,  # 5分钟
+            '10min': 1200,  # 10分钟
+            '15min': 1800,  # 15分钟
+        }
+
+        # 1. 计算所有移动平均线（仅计算最后一个值）
+        ma_dict = {}
+        current_price = price_vals[-1] if n_rows > 0 else np.nan
+        for name, window in ma_windows.items():
+            ma_key = f'{stock_prefix}ma_{name}'
+            min_periods = max(1, int(window * 0.1))
+
+            if n_rows >= min_periods:
+                # 只取需要的窗口数据计算均值
+                calc_window = min(window, n_rows)
+                window_prices = price_vals[-calc_window:]
+                ma_value = np.mean(window_prices)
+            else:
+                ma_value = np.nan
+
+            ma_dict[name] = ma_value
+            features[ma_key] = ma_value
+
+        # 2. 价格相对于移动平均线的位置（核心特征）
+        for name in ['30s', '1min', '5min', '10min']:
+            if name in ma_dict and not np.isnan(ma_dict[name]) and not np.isnan(current_price):
+                ma_value = ma_dict[name]
+                # 偏离度 = (价格 - MA) / MA
+                price_vs_ma_pct = (current_price - ma_value) / (ma_value + 1e-8)
+                features[f'{stock_prefix}price_vs_ma_{name}_pct'] = price_vs_ma_pct
+
+                # 价格是否在MA之上（布尔特征转数值）
+                above_ma = 1 if current_price > ma_value else 0
+                features[f'{stock_prefix}above_ma_{name}'] = above_ma
+
+        # 3. 移动平均线的趋势特征（MA的斜率）
+        for name in ['1min', '5min', '10min']:
+            if name in ma_dict and not np.isnan(ma_dict[name]):
+                window = ma_windows[name]
+                current_ma = ma_dict[name]
+
+                # 短期变化：最近1分钟的变化（计算120步前的MA值）
+                if n_rows > window + 120:
+                    # 取120步前的窗口计算MA
+                    prev_window_start = -window - 120
+                    prev_window_end = -120
+                    prev_window_prices = price_vals[prev_window_start:prev_window_end]
+                    prev_ma = np.mean(prev_window_prices)
+                    change_1min = (current_ma - prev_ma) / (prev_ma + 1e-8)
+                else:
+                    change_1min = 0.0
+
+                features[f'{stock_prefix}ma_{name}_change_1min'] = change_1min
+
+                # 长期变化：EMA趋势强度（直接计算最后一个EMA值）
+                if n_rows >= 300:
+                    # 计算EMA的简化方法（直接计算最后值）
+                    def calculate_ema(values, span):
+                        alpha = 2 / (span + 1)
+                        ema = [values[0]]
+                        for val in values[1:]:
+                            ema.append(alpha * val + (1 - alpha) * ema[-1])
+                        return ema[-1]
+
+                    # 只取需要的窗口计算EMA
+                    calc_window = min(300, n_rows)
+                    window_prices = price_vals[-calc_window:]
+
+                    ema_short = calculate_ema(window_prices, 60)
+                    ema_long = calculate_ema(window_prices, 300)
+                    trend_strength = (ema_short - ema_long) / (ema_long + 1e-8)
+                else:
+                    trend_strength = 0.0
+
+                features[f'{stock_prefix}ma_{name}_trend_strength'] = trend_strength
+
+        # 4. 金叉死叉特征（技术分析核心）
+        if all(name in ma_dict for name in ['30s', '1min', '5min']):
+            ma_30s = ma_dict['30s']
+            ma_1min = ma_dict['1min']
+            ma_5min = ma_dict['5min']
+
+            if not any(np.isnan([ma_30s, ma_1min, ma_5min])):
+                # 4.1 基本金叉死叉信号（判断当前和前一步的状态）
+                # 获取前一步的MA值
+                def get_prev_ma(name):
+                    window = ma_windows[name]
+                    if n_rows > window + 1:
+                        calc_window = min(window, n_rows - 1)
+                        prev_window_prices = price_vals[-window - 1:-1]
+                        return np.mean(prev_window_prices)
+                    return ma_dict[name]
+
+                prev_ma_30s = get_prev_ma('30s')
+                prev_ma_1min = get_prev_ma('1min')
+                prev_ma_5min = get_prev_ma('5min')
+
+                # 30秒线上穿1分钟线
+                cross_up_30s_1min = 1 if (ma_30s > ma_1min) and (prev_ma_30s <= prev_ma_1min) else 0
+                cross_down_30s_1min = 1 if (ma_30s < ma_1min) and (prev_ma_30s >= prev_ma_1min) else 0
+
+                # 1分钟线上穿5分钟线（传统金叉）
+                cross_up_1min_5min = 1 if (ma_1min > ma_5min) and (prev_ma_1min <= prev_ma_5min) else 0
+                cross_down_1min_5min = 1 if (ma_1min < ma_5min) and (prev_ma_1min >= prev_ma_5min) else 0
+
+                features[f'{stock_prefix}cross_up_30s_1min'] = cross_up_30s_1min
+                features[f'{stock_prefix}cross_down_30s_1min'] = cross_down_30s_1min
+                features[f'{stock_prefix}cross_up_1min_5min'] = cross_up_1min_5min
+                features[f'{stock_prefix}cross_down_1min_5min'] = cross_down_1min_5min
+
+                # 4.2 金叉/死叉后的时间（事件驱动特征）
+                # 简化版：遍历历史找最后一次金叉位置（只遍历必要数据）
+                max_lookback = min(1800, n_rows)  # 最多回溯15分钟
+                price_history = price_vals[-max_lookback:]
+
+                # 预计算历史MA值
+                def calc_ma_history(prices, window):
+                    ma_history = []
+                    for i in range(len(prices)):
+                        if i + 1 >= max(1, int(window * 0.1)):
+                            calc_win = min(window, i + 1)
+                            ma_val = np.mean(prices[i - calc_win + 1:i + 1])
+                            ma_history.append(ma_val)
+                        else:
+                            ma_history.append(np.nan)
+                    return ma_history
+
+                ma1_history = calc_ma_history(price_history, ma_windows['1min'])
+                ma5_history = calc_ma_history(price_history, ma_windows['5min'])
+
+                # 找最后一次金叉/死叉
+                last_cross_up = -1
+                last_cross_down = -1
+
+                for i in range(1, len(ma1_history)):
+                    if np.isnan(ma1_history[i]) or np.isnan(ma5_history[i]) or \
+                            np.isnan(ma1_history[i - 1]) or np.isnan(ma5_history[i - 1]):
+                        continue
+
+                    # 金叉：1min上穿5min
+                    if ma1_history[i] > ma5_history[i] and ma1_history[i - 1] <= ma5_history[i - 1]:
+                        last_cross_up = i
+                    # 死叉：1min下穿5min
+                    elif ma1_history[i] < ma5_history[i] and ma1_history[i - 1] >= ma5_history[i - 1]:
+                        last_cross_down = i
+
+                # 计算距离上次金叉/死叉的时间
+                if last_cross_up != -1:
+                    ticks_since_up = len(price_history) - 1 - last_cross_up
+                else:
+                    ticks_since_up = 9999
+
+                if last_cross_down != -1:
+                    ticks_since_down = len(price_history) - 1 - last_cross_down
+                else:
+                    ticks_since_down = 9999
+
+                features[f'{stock_prefix}ticks_since_up_1min_5min'] = ticks_since_up
+                features[f'{stock_prefix}ticks_since_down_1min_5min'] = ticks_since_down
+
+                # 4.3 均线排列状态（多头/空头排列）
+                bull_alignment = 1 if (ma_30s > ma_1min) and (ma_1min > ma_5min) else 0
+                bear_alignment = 1 if (ma_30s < ma_1min) and (ma_1min < ma_5min) else 0
+
+                features[f'{stock_prefix}bull_alignment'] = bull_alignment
+                features[f'{stock_prefix}bear_alignment'] = bear_alignment
+
+                # 排列强度
+                ma_diff_30s_1min = (ma_30s - ma_1min) / (ma_1min + 1e-8)
+                ma_diff_1min_5min = (ma_1min - ma_5min) / (ma_5min + 1e-8)
+                alignment_strength = ma_diff_30s_1min + ma_diff_1min_5min
+                features[f'{stock_prefix}alignment_strength'] = alignment_strength
+
+        # 5. 移动平均线带宽特征（MA间的距离）
+        if all(name in ma_dict for name in ['30s', '5min']):
+            ma_30s = ma_dict['30s']
+            ma_5min = ma_dict['5min']
+
+            if not any(np.isnan([ma_30s, ma_5min])):
+                # 带宽 = (短期MA - 长期MA) / 长期MA
+                ma_bandwidth = (ma_30s - ma_5min) / (ma_5min + 1e-8)
+                features[f'{stock_prefix}ma_bandwidth'] = ma_bandwidth
+
+                # 带宽的变化率（1分钟变化）
+                if n_rows > ma_windows['5min'] + 120:
+                    # 计算120步前的带宽
+                    prev_30s_window = price_vals[-ma_windows['30s'] - 120:-120]
+                    prev_30s_ma = np.mean(prev_30s_window)
+                    prev_5min_window = price_vals[-ma_windows['5min'] - 120:-120]
+                    prev_5min_ma = np.mean(prev_5min_window)
+                    prev_bandwidth = (prev_30s_ma - prev_5min_ma) / (prev_5min_ma + 1e-8)
+                    bandwidth_change = ma_bandwidth - prev_bandwidth
+                else:
+                    bandwidth_change = 0.0
+
+                features[f'{stock_prefix}ma_bandwidth_change'] = bandwidth_change
+
+        # 6. 价格与MA的背离特征
+        if all(name in ma_dict for name in ['1min', '5min']):
+            ma_1min = ma_dict['1min']
+            ma_5min = ma_dict['5min']
+
+            if not any(np.isnan([current_price, ma_1min, ma_5min])) and n_rows > 60:
+                # 计算价格和MA的动量（30秒变化）
+                price_30s_ago = price_vals[-61]  # 60步前的价格
+                price_momentum = current_price - price_30s_ago
+
+                # 计算60步前的MA值
+                ma1_60s_ago_window = price_vals[-ma_windows['1min'] - 60:-60]
+                ma1_60s_ago = np.mean(ma1_60s_ago_window) if len(ma1_60s_ago_window) >= max(1, int(
+                    ma_windows['1min'] * 0.1)) else ma_1min
+                ma_1min_momentum = ma_1min - ma1_60s_ago
+
+                ma5_60s_ago_window = price_vals[-ma_windows['5min'] - 60:-60]
+                ma5_60s_ago = np.mean(ma5_60s_ago_window) if len(ma5_60s_ago_window) >= max(1, int(
+                    ma_windows['5min'] * 0.1)) else ma_5min
+                ma_5min_momentum = ma_5min - ma5_60s_ago
+
+                # 背离判断
+                divergence_1min = 1 if ((price_momentum > 0) & (ma_1min_momentum < 0)) | (
+                            (price_momentum < 0) & (ma_1min_momentum > 0)) else 0
+                divergence_5min = 1 if ((price_momentum > 0) & (ma_5min_momentum < 0)) | (
+                            (price_momentum < 0) & (ma_5min_momentum > 0)) else 0
+
+                features[f'{stock_prefix}divergence_1min'] = divergence_1min
+                features[f'{stock_prefix}divergence_5min'] = divergence_5min
+
+        # 4. 收益率波动率（使用1期收益率）
+        for window in [10, 20, 30]:
+            if n_rows > window:
+                # 只计算最后window个收益率的标准差
+                rets = []
+                for i in range(-window, 0):
+                    if i - 1 >= -n_rows:
+                        ret = (price_vals[i] - price_vals[i - 1]) / price_vals[i - 1]
+                        rets.append(ret)
+                ret_vol = np.std(rets) if len(rets) > 1 else 0.0
+            else:
+                ret_vol = np.nan
+            features[f'{stock_prefix}ret_volatility_{window}'] = ret_vol
+
+    # === 成交量特征 ===
+    volume_col = f'{stock_prefix}Volume'
+    if last_price_col in df.columns and volume_col in df.columns:
+        price_vals = df_vals[last_price_col].values
+        volume_vals = df_vals[volume_col].values
+        n_rows = len(price_vals)
+        current_price = price_vals[-1] if n_rows > 0 else np.nan
+
+        for window in [120, 600, 1200]:
+            if n_rows >= 1:
+                # 只取最后window行计算VWAP
+                calc_window = min(window, n_rows)
+                window_prices = price_vals[-calc_window:]
+                window_volumes = volume_vals[-calc_window:]
+
+                vwap_numerator = np.sum(window_prices * window_volumes)
+                vwap_denominator = np.sum(window_volumes) + 1e-8
+                vwap = vwap_numerator / vwap_denominator
+
+                features[f'{stock_prefix}vwap_{window}'] = vwap
+                features[f'{stock_prefix}price_vwap_diff_{window}'] = current_price - vwap
+                features[f'{stock_prefix}price_vwap_ratio_{window}'] = current_price / (vwap + 1e-8) - 1
+
+    # === 委托深度特征 ===
+    bid_volume_cols = [f'{stock_prefix}BidVolume{i}' for i in range(1, 6)]
+    ask_volume_cols = [f'{stock_prefix}AskVolume{i}' for i in range(1, 6)]
+
+    if all(col in df.columns for col in bid_volume_cols + ask_volume_cols):
+        # 只取最后一行的委托深度数据
+        last_bid = df_vals[bid_volume_cols].iloc[-1].values
+        last_ask = df_vals[ask_volume_cols].iloc[-1].values
+
+        total_bid_depth = np.sum(last_bid)
+        total_ask_depth = np.sum(last_ask)
+
+        # 5档深度不平衡
+        depth_imbalance = (total_bid_depth - total_ask_depth) / (total_bid_depth + total_ask_depth + 1e-6)
+        features[f'{stock_prefix}depth_imbalance'] = depth_imbalance
+
+        # 深度变化率（120步前的深度）
+        if n_rows > 120:
+            prev_bid = df_vals[bid_volume_cols].iloc[-121].values
+            prev_ask = df_vals[ask_volume_cols].iloc[-121].values
+            prev_bid_total = np.sum(prev_bid)
+            prev_ask_total = np.sum(prev_ask)
+
+            bid_change = (total_bid_depth - prev_bid_total) / (prev_bid_total + 1e-8) if prev_bid_total > 0 else 0
+            ask_change = (total_ask_depth - prev_ask_total) / (prev_ask_total + 1e-8) if prev_ask_total > 0 else 0
+            depth_change = bid_change - ask_change
+        else:
+            depth_change = 0.0
+
+        features[f'{stock_prefix}depth_change'] = depth_change
+
+    # === 订单流不平衡（高级版）===
+    buy_vol_col = f'{stock_prefix}OrderBuyVolume'
+    sell_vol_col = f'{stock_prefix}OrderSellVolume'
+    if buy_vol_col in df.columns and sell_vol_col in df.columns:
+        # 只取最后一行的订单数据
+        last_buy = df_vals[buy_vol_col].iloc[-1]
+        last_sell = df_vals[sell_vol_col].iloc[-1]
+
+        # 订单流不平衡
+        order_imbalance = (last_buy - last_sell) / (last_buy + last_sell + 1e-6)
+        features[f'{stock_prefix}order_imbalance'] = order_imbalance
+
+        # 订单流不平衡MA（120窗口）
+        n_rows = len(df_vals)
+        if n_rows >= 120:
+            buy_vals = df_vals[buy_vol_col].iloc[-120:].values
+            sell_vals = df_vals[sell_vol_col].iloc[-120:].values
+            imb_vals = (buy_vals - sell_vals) / (buy_vals + sell_vals + 1e-6)
+            order_imbalance_ma = np.mean(imb_vals)
+        else:
+            order_imbalance_ma = order_imbalance
+
+        features[f'{stock_prefix}order_imbalance_ma'] = order_imbalance_ma
+
+    return features
+
+
+
 # 添加MA特征后处理的辅助函数
 def post_process_ma_features(features_df, stock_prefix='E'):
     """对移动平均线特征进行后处理"""
@@ -434,6 +863,7 @@ def enhanced_time_features(time_series):
 
     return time_features
 
+
 def add_e_specific_features(stock_features_dict):
     """为E股添加特定特征（预测目标）"""
     e_features = {}
@@ -469,7 +899,6 @@ def add_e_specific_features(stock_features_dict):
             e_features[f'E_{stock}_momentum_ratio'] = e_momentum / (stock_momentum.abs() + 1e-6)
 
     return e_features
-
 
 
 def create_all_features_enhanced(df):
@@ -594,525 +1023,3 @@ def feature_post_processing(features_df):
     #print(f"  后处理完成，最终特征数: {len(features_df.columns)}")
     return features_df
 
-
-
-# ============ 第四部分：特征选择函数 ============
-def select_important_features(features_df, target_col='target', n_features=100):
-    """
-    选择最重要的特征
-
-    方法：使用随机森林计算特征重要性
-    原理：通过决策树的分裂节点计算特征对目标变量的解释程度
-
-    数学公式：
-    特征重要性 = 特征在所有树中分裂节点的平均不纯度减少量
-    """
-    print(f"\n选择最重要的{n_features}个特征...")
-
-    # 分离特征和目标
-    x = features_df.drop(columns=[target_col])
-    y = features_df[target_col]
-
-    # 将所有列转换为数值（无法转换的变为 NaN）
-    x = x.apply(pd.to_numeric, errors='coerce')
-    # 将正负无穷替换为 NaN
-    x = x.replace([np.inf, -np.inf], np.nan)
-    # 用0填充 NaN（也可改为其他策略）      哦
-    x = x.fillna(0)
-    # 限制极端值，防止超出 float32 范围（阈值可调整）
-    x = x.clip(-1e10, 1e10)
-
-    # 同样处理目标 y，避免异常值
-    y = pd.to_numeric(y, errors='coerce').replace([np.inf, -np.inf], np.nan).fillna(0)
-    # -------------------------------------------------------------------
-
-    # 使用随机森林（树的数量少一些，加快速度）
-    rf = RandomForestRegressor(
-        n_estimators=50,  # 50棵树
-        max_depth=10,  # 最大深度10
-        random_state=42,  # 随机种子，保证结果可重复
-        n_jobs=-1  # 使用所有CPU核心
-    )
-
-    # 训练随机森林
-    rf.fit(x, y)
-
-    # 获取特征重要性
-    importance_df = pd.DataFrame({
-        'feature': x.columns,
-        'importance': rf.feature_importances_
-    }).sort_values('importance', ascending=False)
-
-    # 显示最重要的10个特征
-    print("\nTop 10最重要的特征：")
-    for idx, (_, row) in enumerate(importance_df.head(10).iterrows(), start=1):
-        print(f"  {idx}. {row['feature']}: {row['importance']:.4f}")
-
-    # 选择最重要的n_features个特征
-    selected_features = importance_df.head(n_features)['feature'].tolist()
-
-
-
-    selected_df = pd.concat([x[selected_features].reset_index(drop=True),
-                             pd.Series(y.values, name=target_col)], axis=1)
-
-    # 最终再做一次数值化/替换/裁剪，确保没有 inf/NaN/超大值
-    selected_df = selected_df.apply(pd.to_numeric, errors='coerce') \
-        .replace([np.inf, -np.inf], np.nan) \
-        .fillna(0) \
-        .clip(-1e10, 1e10)
-
-
-    return selected_df, selected_features #main_enhanced函数中只用到selected_features，selected_df没用到
-
-
-def clean_target_outliers(y, n_sigma=3):#在这段代码里，这个函数没有用到。何意味有一个用法呀
-    """清理目标变量的异常值"""
-    y_series = pd.Series(y) if not isinstance(y, pd.Series) else y
-
-    # 计算均值和标准差
-    y_mean = y_series.mean()
-    y_std = y_series.std()
-
-    # 定义异常值边界
-    lower_bound = y_mean - n_sigma * y_std
-    upper_bound = y_mean + n_sigma * y_std
-
-    # 将异常值设为边界值
-    y_cleaned = y_series.copy()
-    y_cleaned[y_cleaned < lower_bound] = lower_bound
-    y_cleaned[y_cleaned > upper_bound] = upper_bound
-
-    print(f"目标值清洗: 原始范围[{y_series.min():.6f}, {y_series.max():.6f}], "
-          f"清洗后[{y_cleaned.min():.6f}, {y_cleaned.max():.6f}]")
-
-    return y_cleaned.values
-
-
-# ============ 第五部分：模型训练函数 ============
-def train_enhanced_lightgbm(x_train, y_train, x_val, y_val):
-    """LightGBM训练"""
-    print("\n开始训练...")
-
-    # 转换数据
-    x_train_np = np.asarray(x_train, dtype=np.float32)
-    x_val_np = np.asarray(x_val, dtype=np.float32)
-    y_train_np = np.asarray(y_train, dtype=np.float32)
-    y_val_np = np.asarray(y_val, dtype=np.float32)
-
-    train_data = lgb.Dataset(x_train_np, label=y_train_np)
-    val_data = lgb.Dataset(x_val_np, label=y_val_np, reference=train_data)
-
-    # 优化后的参数
-    params = {
-        'objective': 'regression',
-        'metric': 'rmse',
-        'boosting_type': 'gbdt',
-        'learning_rate': 0.05,
-        'num_leaves': 63,
-        'max_depth': 7,
-        'min_data_in_leaf': 100,
-        'bagging_fraction': 0.7,
-        'bagging_freq': 5,
-        'feature_fraction': 0.7,
-        'lambda_l1': 1,
-        'lambda_l2': 1,
-        'min_gain_to_split': 0.02,
-        'verbosity': -1,
-        'seed': 42,
-        'n_jobs': -1,
-        'max_bin': 255,
-        'subsample_for_bin': 200000,
-    }
-
-    print("  开始增强训练...")
-
-    model = lgb.train(
-        params,
-        train_data,
-        num_boost_round=300,  # 增加训练轮数
-        valid_sets=[train_data, val_data],
-        valid_names=['train', 'valid'],
-        callbacks=[
-            lgb.log_evaluation(period=50),
-            lgb.early_stopping(stopping_rounds=30)
-        ]
-    )
-
-    print('在训练过程中绘图...')
-
-    print('画出特征重要度...')
-    ax = lgb.plot_importance(model, max_num_features=10)
-    plt.show()
-
-    print('画出第84颗树...')
-    ax = lgb.plot_tree(model, tree_index=4, figsize=(20, 8), show_info=['split_gain'])
-    plt.show()
-
-    # print('用graphviz画出第84颗树...')
-    # graph = lgb.create_tree_digraph(gbm, tree_index=83, name='Tree84')
-    # graph.render(view=True)
-
-    return model
-
-
-# ============ 第六部分：评估函数 ============
-def calculate_ic(y_true, y_pred):
-    """
-    计算IC（信息系数，Information Coefficient）
-
-    数学公式：
-    IC = corr(预测收益率, 真实收益率)
-    使用皮尔森相关系数
-
-    比赛评分标准：
-    排名按IC值从高到低，IC越高越好
-    """
-    # 计算皮尔森相关系数
-    ic_value, p_value = pearsonr(y_true, y_pred)
-    return ic_value
-
-
-def calculate_rank_ic(y_true, y_pred):
-    """
-    计算Rank IC（斯皮尔曼秩相关系数）
-
-    数学公式：
-    Rank IC = corr(rank(预测收益率), rank(真实收益率))
-
-    优点：
-    对异常值不敏感，更稳健
-    """
-    # 计算斯皮尔曼秩相关系数
-    rank_ic_value, p_value = spearmanr(y_true, y_pred)
-    return rank_ic_value
-
-# ============ 第七部分：主程序 ============
-def main_enhanced():
-    """增强版主函数 - 将特征选择移至交叉验证内部"""
-    print("=" * 60)
-    print("股票未来收益率预测模型 - 增强版 (特征选择在交叉验证内部)")
-    print("=" * 60)
-
-    # 1. 数据加载（与原来相同）
-    days = ['1', '2', '3', '4', '5']
-    all_days_data = []
-
-    for day in days:
-        print(f"\n加载第{day}天数据...")
-        day_data_config = {
-            'A': f'data/{day}/A.csv',
-            'B': f'data/{day}/B.csv',
-            'C': f'data/{day}/C.csv',
-            'D': f'data/{day}/D.csv',
-            'E': f'data/{day}/E.csv'
-        }
-        day_merged_data = merge_all_stocks(day_data_config)
-        all_days_data.append(day_merged_data)
-
-    merged_data = pd.concat(all_days_data, ignore_index=True)
-    merged_data = merged_data.sort_values('Time').reset_index(drop=True)
-
-    # 2. 增强版特征工程（全部数据上创建特征，但只做基本处理）
-    print("\n[步骤2] 增强版特征工程")
-    features_df = create_all_features_enhanced(merged_data)
-
-    # 3. 特征后处理（全局处理，但主要是移除常量特征等，不涉及目标泄露）
-    features_df = feature_post_processing(features_df)
-
-    # 现在获得包含所有特征和目标的数据集
-    x_full = features_df.drop(columns=['target'])
-    y_full = features_df['target']
-
-    # 4. 时间序列交叉验证（内部进行特征选择）
-    print("\n[步骤3] 时间序列交叉验证 (内部特征选择)")
-    tscv = TimeSeriesSplit(n_splits=5)#这里就准备拆成5折了
-    ic_scores = []
-    rank_ic_scores = []
-
-    for fold, (train_idx, val_idx) in enumerate(tscv.split(x_full)):
-        print(f"\n--- 第{fold + 1}折交叉验证 ---")
-        print(train_idx, val_idx)#我看看怎么个事
-
-        # 划分训练集和验证集（完整特征）
-        x_train_full = x_full.iloc[train_idx]
-        y_train_full = y_full.iloc[train_idx]
-        x_val_full = x_full.iloc[val_idx]
-        y_val_full = y_full.iloc[val_idx]
-
-        # ---------- 特征选择：仅在训练集上进行 ----------
-        print("  在训练集上进行特征选择...")
-        # 构造包含目标的训练集DataFrame
-        train_df_with_target = pd.concat([x_train_full, y_train_full.rename('target')], axis=1)
-        # 调用特征选择函数，返回选中的特征列表
-        _, selected_features_fold = select_important_features(
-            train_df_with_target,
-            n_features=150  # 每折选出150个特征
-        )
-        print(f"  选出的特征数：{len(selected_features_fold)}")
-
-        # 根据选出的特征提取训练集和验证集
-        x_train = x_train_full[selected_features_fold]
-        x_val = x_val_full[selected_features_fold]
-
-        # ---------- 目标变量异常值清洗（基于训练集统计量） ----------删过高过低
-        y_train_mean = y_train_full.mean()
-        y_train_std = y_train_full.std()
-        lower_bound = y_train_mean - 3 * y_train_std
-        upper_bound = y_train_mean + 3 * y_train_std
-
-        y_train = y_train_full.clip(lower_bound, upper_bound)
-        y_val = y_val_full.clip(lower_bound, upper_bound)  # 使用相同的边界
-
-        print(f"  训练集样本数：{len(x_train)}，验证集样本数：{len(x_val)}")
-        print(f"  目标变量清洗后范围：[{y_train.min():.6f}, {y_train.max():.6f}]")
-
-        # ---------- 标准化 ----------
-        scaler = StandardScaler()
-        x_train_scaled = scaler.fit_transform(x_train)
-        x_val_scaled = scaler.transform(x_val)
-
-        # ---------- 训练模型 ----------
-        model = train_enhanced_lightgbm(
-            x_train_scaled, y_train,
-            x_val_scaled, y_val
-        )#调用了上面写的函数
-
-        # ---------- 预测和评估 ----------
-        y_pred = model.predict(x_val_scaled)
-        ic = calculate_ic(y_val, y_pred)          # 使用清洗后的y_val评估？
-        rank_ic = calculate_rank_ic(y_val, y_pred)
-
-        ic_scores.append(ic)
-        rank_ic_scores.append(rank_ic)
-
-        print(f"  第{fold + 1}折结果：IC={ic:.4f}, Rank IC={rank_ic:.4f}")
-
-    # 5. 输出交叉验证结果
-    print("\n[步骤4] 交叉验证评估结果")
-    print("-" * 40)
-    print("交叉验证IC分数：")
-    for i, ic in enumerate(ic_scores):
-        print(f"  第{i + 1}折：{ic:.4f}")
-    avg_ic = np.mean(ic_scores)
-    print(f"\n平均IC：{avg_ic:.4f} (±{np.std(ic_scores):.4f})")
-    print(f"平均Rank IC：{np.mean(rank_ic_scores):.4f} (±{np.std(rank_ic_scores):.4f})")
-
-    # 6. 如果效果达标，使用全部数据训练最终模型（这里有没有优化的余地）
-    if avg_ic > 0.1:
-        print("\n[步骤5] 训练最终模型（使用全部数据）")
-
-        # 在全部数据上重新进行特征选择（保持一致性）
-        final_selected_df, final_selected_features = select_important_features(
-            features_df,
-            n_features=150
-        )
-        x_final = final_selected_df.drop(columns=['target'])
-        y_final = final_selected_df['target']
-
-        # 清洗目标变量（基于全部数据）
-        y_final_clean = clean_target_outliers(y_final, n_sigma=3)
-
-        # 标准化
-        final_scaler = StandardScaler()
-        x_final_scaled = final_scaler.fit_transform(x_final)
-
-        # 训练LightGBM
-        train_data = lgb.Dataset(x_final_scaled, label=y_final_clean)
-        final_model = lgb.train(
-            {
-                'objective': 'regression',
-                'metric': 'rmse',
-                'boosting_type': 'gbdt',
-                'learning_rate': 0.1,
-                'num_leaves': 127,
-                'max_depth': -1,
-                'min_data_in_leaf': 20,
-                'bagging_fraction': 0.8,
-                'bagging_freq': 1,
-                'feature_fraction': 0.8,
-                'lambda_l1': 0.0,
-                'lambda_l2': 0.0,
-                'min_gain_to_split': 0.0,
-                'verbosity': -1,
-                'seed': 42,
-                'n_jobs': -1
-            },
-            train_data,
-            num_boost_round=300,
-            callbacks=[lgb.log_evaluation(50)]
-        )
-
-        # 保存模型及相关文件
-        import joblib
-        joblib.dump(final_model, 'final_stock_model_enhanced.pkl')
-        joblib.dump(final_scaler, 'scaler_enhanced.pkl')
-        joblib.dump(final_selected_features, 'selected_features_enhanced.pkl')
-
-        print("\n模型训练完成！IC有明显提升。")
-    else:
-        print("\n警告：IC未达到阈值，不保存模型。建议检查数据或特征。")
-
-    return avg_ic
-
-
-# ============ 第八部分：预测新数据函数 ============
-def predict_new_data(self, E_row, sector_rows):
-    [A_row,B_row,C_row,D_row] = sector_rows
-    #print("\n" + "=" * 60)
-    #print("开始预测新数据")
-    #print("=" * 60)
-
-    # 合并五只股票数据（使用训练时的相同函数）
-    #print("合并五只股票测试数据，写成一行...")
-    test_merged_data = merge_all_stocks_one_line(A_row,B_row,C_row,D_row,E_row)#只有一行五个股票的数据
-    self.whole_dataframe=pd.concat((self.whole_dataframe,test_merged_data)).reset_index(drop=True)
-
-    self.whole_dataframe.to_csv("whole_data.csv", index=False)
-
-    #只保留最近15min的数据（即1800行）
-    if len(self.whole_dataframe) > 1800:
-        self.whole_dataframe=self.whole_dataframe.iloc[1:]
-
-    # 为新数据创建特征（使用与训练相同的特征工程）
-    #print("为新数据创建特征...")
-    test_features = create_all_features_enhanced(self.whole_dataframe)
-
-    # 确保特征一致
-    missing_features = set(self.selected_features) - set(test_features.columns)
-    extra_features = set(test_features.columns) - set(self.selected_features)
-
-    #print(f"测试数据特征数: {len(test_features.columns)}")
-    #print(f"模型需要特征数: {len(self.selected_features)}")
-
-    if missing_features:
-        #print(f"警告：缺失{len(missing_features)}个特征")
-        # 缺失的特征用0填充
-        for feature in missing_features:
-            test_features[feature] = 0
-
-    if extra_features:
-        #print(f"移除{len(extra_features)}个多余特征")
-        test_features = test_features.drop(columns=list(extra_features))
-
-    # 按正确的顺序选择特征
-    x_test = test_features[self.selected_features]
-
-    # 标准化
-    x_test_scaled = self.x_scaler.transform(x_test)
-
-    # 预测
-    predictions = self.model.predict(x_test_scaled)
-
-    # 创建结果DataFrame
-    # result_df = pd.DataFrame({
-    #     'Time': test_merged_data['Time'],
-    #     'Predicted_Return5min': predictions
-    # })
-
-    # 保存结果
-
-    #print("预测完成")
-
-    return predictions[0]
-
-def load_stock_data_one_line(row,stock_name):
-    """
-    .csv->dataframe
-    改列名（+ABCDE,#target）
-    """
-    #print(f"正在加载{stock_name}股数据...")
-
-    # 读取CSV文件
-    df = row.to_frame().T
-    #print(df)
-
-    # 检查列名
-    #print(f"  原始列名: {df.columns.tolist()[:5]}...")
-
-    df.drop(columns=['Return5min'], inplace=True, errors='ignore')
-    # 为所有列添加前缀（除了Time）
-    rename_dict = {}
-    for col in df.columns:
-        if col == 'Time':
-            continue  # 时间列保持不变
-        elif col == 'Return5min':
-            if stock_name == 'E':
-                rename_dict[col] = 'target'  # E股票的目标变量
-            else:
-                rename_dict[col] = f'{stock_name}_Return5min'  # 其他股票的5分钟收益率
-        else:
-            rename_dict[col] = f'{stock_name}_{col}'
-
-    df = df.rename(columns=rename_dict)
-
-    # 显示处理后的列名
-    #print(f"  处理后的列名示例: {[col for col in df.columns if 'Return5min' in col or col == 'target']}")
-
-    return df
-
-
-def merge_all_stocks_one_line(A_row,B_row,C_row,D_row,E_row):
-    """
-    合并五只股票的数据 - 修正版
-    """
-    #print("开始合并五只股票数据...")
-
-    all_dfs = []
-
-
-    df = load_stock_data_one_line(A_row,'A')
-    all_dfs.append(df)
-    df = load_stock_data_one_line(B_row, 'B')
-    all_dfs.append(df)
-    df = load_stock_data_one_line(C_row,'C')
-    all_dfs.append(df)
-    df = load_stock_data_one_line(D_row,'D')
-    all_dfs.append(df)
-    df = load_stock_data_one_line(E_row,'E')
-    all_dfs.append(df)
-    #print(all_dfs)
-    # 使用reduce逐步合并 concat?
-    from functools import reduce
-
-    def merge_func(df1, df2):
-        return pd.merge(df1, df2, on='Time', how='inner')
-
-    merged_df = reduce(merge_func, all_dfs)
-
-    #print(f"合并完成，总数据形状：{merged_df.shape}")
-    #print(f"列名数量：{len(merged_df.columns)}")
-
-    # 显示包含Return5min的列，确认没有重复
-    return_cols = [col for col in merged_df.columns if 'Return5min' in col or 'target' in col]
-    #print(f"收益率相关列：{return_cols}")
-
-    return merged_df
-
-
-
-# ============ 第九部分：运行代码 ============
-if __name__ == "__main__":
-    """
-    运行主程序
-    有两种模式：
-    1. 训练模式：运行main()函数
-    2. 预测模式：运行predict_new_data()函数
-    """
-
-    # 模式选择
-    print("请选择模式：")
-    print("1. 训练模式（使用5天数据训练模型）")
-    print("2. 预测模式（使用训练好的模型预测新数据）")
-
-    choice = input("请输入1或2：")
-
-    if choice == '1':
-        # 训练模式
-        main_enhanced()
-    elif choice == '2':
-        # 预测模式
-        test_file_path = 'test_data/1/'
-        predict_new_data(test_file_path)
-    else:
-        print("输入错误，请输入1或2")

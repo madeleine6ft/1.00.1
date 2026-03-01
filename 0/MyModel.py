@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-from main_1 import *
+from predict import *
 
 ########My Model
 class MyModel:
@@ -20,8 +20,7 @@ class MyModel:
         pass
 
 
-    def online_predict(self, E_row, sector_rows, model_path='final_stock_model_enhanced.pkl',
-                         scaler_path='scaler_enhanced.pkl', features_path='selected_features_enhanced.pkl'):
+    def online_predict(self, E_row, sector_rows):
         return predict_new_data(self,E_row, sector_rows)
 
 
