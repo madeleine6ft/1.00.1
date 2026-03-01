@@ -6,26 +6,10 @@ import warnings
 
 warnings.filterwarnings('ignore')  # 忽略警告信息，让输出更干净
 
-# 机器学习相关库
-from sklearn.model_selection import TimeSeriesSplit  # 时间序列交叉验证
-from sklearn.preprocessing import StandardScaler  # 数据标准化
-from sklearn.ensemble import RandomForestRegressor  # 特征选择用的随机森林
-import lightgbm as lgb  # 主要预测模型
-
-# 评估指标相关
-from scipy.stats import pearsonr, spearmanr  # 计算IC（相关系数）
-
-import matplotlib.pyplot as plt
 
 # ============ 第八部分：预测新数据函数 ============
 def predict_new_data(self, E_row, sector_rows):
     [A_row,B_row,C_row,D_row] = sector_rows
-    #print("\n" + "=" * 60)
-    #print("开始预测新数据")
-    #print("=" * 60)
-
-    # 合并五只股票数据（使用训练时的相同函数）
-    #print("合并五只股票测试数据，写成一行...")
     test_merged_data = merge_all_stocks_one_line(A_row,B_row,C_row,D_row,E_row)#只有一行五个股票的数据
     self.whole_dataframe=pd.concat((self.whole_dataframe,test_merged_data)).reset_index(drop=True)
 
@@ -35,20 +19,15 @@ def predict_new_data(self, E_row, sector_rows):
     if len(self.whole_dataframe) > 1800:
         self.whole_dataframe=self.whole_dataframe.iloc[1:]
 
-    # 为新数据创建特征（使用与训练相同的特征工程）
-    #print("为新数据创建特征...")
+
     test_features = create_all_features_enhanced(self.whole_dataframe)
 
-    # 确保特征一致
     missing_features = set(self.selected_features) - set(test_features.columns)
     extra_features = set(test_features.columns) - set(self.selected_features)
 
-    #print(f"测试数据特征数: {len(test_features.columns)}")
-    #print(f"模型需要特征数: {len(self.selected_features)}")
+
 
     if missing_features:
-        #print(f"警告：缺失{len(missing_features)}个特征")
-        # 缺失的特征用0填充
         for feature in missing_features:
             test_features[feature] = 0
 
@@ -64,25 +43,9 @@ def predict_new_data(self, E_row, sector_rows):
 
     # 预测
     predictions = self.model.predict(x_test_scaled)
-
-    # 创建结果DataFrame
-    # result_df = pd.DataFrame({
-    #     'Time': test_merged_data['Time'],
-    #     'Predicted_Return5min': predictions
-    # })
-
-    # 保存结果
-
-    #print("预测完成")
-
     return predictions[0]
 
 def load_stock_data_one_line(row,stock_name):
-    """
-    .csv->dataframe
-    改列名（+ABCDE,#target）
-    """
-    #print(f"正在加载{stock_name}股数据...")
 
     # 读取CSV文件
     df = row.to_frame().T
@@ -316,6 +279,7 @@ def enhanced_stock_features(df, stock_prefix):
         price = df[last_price_col]
         for i in range(0,30):
             ret_1.append(price[i-30] - price[i-31])/price[i-31]
+        ret_1=pd.Series(ret_1)
         features[f'{stock_prefix}ret_volatility_10'] = ret_1[-10:].std()
         features[f'{stock_prefix}ret_volatility_20'] = ret_1[-20:].std()
         features[f'{stock_prefix}ret_volatility_30'] = ret_1[-30:].std()
@@ -329,7 +293,7 @@ def enhanced_stock_features(df, stock_prefix):
         volume = df[f'{stock_prefix}Volume']
 
         for window in [120, 600, 1200]:  # 1分钟、5分钟、10分钟VWAP
-            vwap = (price * volume).rolling(window).sum() / volume.rolling(window).sum()
+            vwap = (price * volume).tail(window).sum() / volume.tail(window).sum()
             features[f'{stock_prefix}vwap_{window}'] = vwap
             features[f'{stock_prefix}price_vwap_diff_{window}'] = price - vwap
             features[f'{stock_prefix}price_vwap_ratio_{window}'] = price / (vwap + 1e-8) - 1
@@ -340,26 +304,31 @@ def enhanced_stock_features(df, stock_prefix):
 
     if all(col in df.columns for col in bid_volume_cols + ask_volume_cols):
         # 5档深度不平衡
-        total_bid_depth = df[bid_volume_cols].sum(axis=1)
-        total_ask_depth = df[ask_volume_cols].sum(axis=1)
+        total_bid_depth = df[bid_volume_cols].iloc[-1].sum(axis=1)
+        total_ask_depth = df[ask_volume_cols].iloc[-1].sum(axis=1)
+        total_bid_depth_before_1min = df[bid_volume_cols].iloc[-121].sum(axis=1)
+        total_ask_depth_before_1min = df[ask_volume_cols].iloc[-121].sum(axis=1)
+        total_bid_depth_change_1min = (total_bid_depth-total_bid_depth_before_1min)/total_bid_depth_before_1min
+        total_ask_depth_change_1min = (total_ask_depth-total_ask_depth_before_1min)/total_ask_depth_before_1min
+
         features[f'{stock_prefix}depth_imbalance'] = (
                                                              total_bid_depth - total_ask_depth
                                                      ) / (total_bid_depth + total_ask_depth + 1e-6)
 
         # 深度变化率
-        features[f'{stock_prefix}depth_change'] = total_bid_depth.pct_change(120) - total_ask_depth.pct_change(120)
+        features[f'{stock_prefix}depth_change'] = total_bid_depth_change_1min-total_ask_depth_change_1min
 
     # === 订单流不平衡（高级版）===
     if (f'{stock_prefix}OrderBuyVolume' in df.columns and
             f'{stock_prefix}OrderSellVolume' in df.columns):
         # 订单流不平衡
         order_imbalance = (
-                                  df[f'{stock_prefix}OrderBuyVolume'] -
-                                  df[f'{stock_prefix}OrderSellVolume']
-                          ) / (df[f'{stock_prefix}OrderBuyVolume'] + df[f'{stock_prefix}OrderSellVolume'] + 1e-6)
+                                  df[f'{stock_prefix}OrderBuyVolume'].iloc(-1) -
+                                  df[f'{stock_prefix}OrderSellVolume'].iloc(-1)
+                          ) / (df[f'{stock_prefix}OrderBuyVolume'].iloc(-1) + df[f'{stock_prefix}OrderSellVolume'].iloc(-1) + 1e-6)
 
         features[f'{stock_prefix}order_imbalance'] = order_imbalance
-        features[f'{stock_prefix}order_imbalance_ma'] = order_imbalance.rolling(120).mean()
+        features[f'{stock_prefix}order_imbalance_ma'] = features[f'{stock_prefix}order_imbalance'].tail(120).mean()
 
     return features
 
@@ -370,27 +339,6 @@ def enhanced_stock_features(df, stock_prefix):
 # 添加MA特征后处理的辅助函数
 def post_process_ma_features(features_df, stock_prefix='E'):
     """对移动平均线特征进行后处理"""
-
-    # 1. 处理MA特征的缺失值
-    ma_columns = [col for col in features_df.columns if 'ma_' in col]
-
-    for col in ma_columns:
-        # 前向填充
-        features_df[col] = features_df[col].ffill()
-
-        # 对于开头依然为NaN的，用第一个有效值填充
-        if features_df[col].isna().any():
-            first_valid = features_df[col].first_valid_index()
-            if first_valid is not None:
-                features_df[col] = features_df[col].fillna(features_df.loc[first_valid, col])
-
-    # 2. 平滑MA衍生特征（减少噪声）
-    smooth_columns = [col for col in features_df.columns if
-                      any(x in col for x in ['_trend_', '_strength', '_alignment'])]
-
-    for col in smooth_columns:
-        # 使用EMA平滑
-        features_df[f'{col}_smooth'] = features_df[col].ewm(span=30, adjust=False).mean()
 
     # 3. 创建MA特征组合（交互特征）
     if f'{stock_prefix}price_vs_ma_30s_pct' in features_df.columns and \
@@ -411,63 +359,7 @@ def post_process_ma_features(features_df, stock_prefix='E'):
 
 
 def enhanced_sector_features(stock_features_dict):
-    """增强版板块特征 - 更强版本"""
     sector_features = {}
-
-    # === 1. 直接使用其他股票的收益率作为特征 ===
-    for stock in ['A', 'B', 'C', 'D']:
-        if f'{stock}_Return5min' in stock_features_dict:
-            # 直接使用收益率
-            sector_features[f'{stock}_return'] = stock_features_dict[f'{stock}_Return5min']
-
-            # 标准化后的收益率
-            return_data = stock_features_dict[f'{stock}_Return5min']
-            rolling_mean = return_data.rolling(30).mean()
-            rolling_std = return_data.rolling(30).std()
-            sector_features[f'{stock}_return_zscore'] = (return_data - rolling_mean) / (rolling_std + 1e-6)
-
-    # === 2. 板块加权收益率 ===
-    returns_list = []
-    weights = []  # 可以根据相关性赋予权重
-
-    for stock in ['A', 'B', 'C', 'D']:
-        if f'{stock}_Return5min' in stock_features_dict:
-            returns_list.append(stock_features_dict[f'{stock}_Return5min'])
-            # 简单等权重
-            weights.append(1.0)
-
-    if returns_list:
-        returns_df = pd.concat(returns_list, axis=1)
-        # 等权重板块收益率
-        sector_features['sector_weighted_return'] = returns_df.mean(axis=1)
-
-        # 板块收益率离散度
-        sector_features['sector_return_dispersion'] = returns_df.std(axis=1)
-
-    # === 3. 板块动量领先指标（更直接的领先效应）===
-    for lead_stock in ['A', 'B', 'C', 'D']:
-        lead_return_col = f'{lead_stock}_Return5min'
-        if lead_return_col in stock_features_dict:
-            lead_return = stock_features_dict[lead_return_col]
-
-            # 直接使用领先股票的收益率
-            for lag in [1, 2, 5, 10]:
-                sector_features[f'{lead_stock}_return_lag_{lag}'] = lead_return.shift(lag)
-
-    # === 4. E股与其他股票收益率的差值 ===
-    if 'E_Return5min' in stock_features_dict:
-        e_return = stock_features_dict['E_Return5min']
-
-        for stock in ['A', 'B', 'C', 'D']:
-            if f'{stock}_Return5min' in stock_features_dict:
-                stock_return = stock_features_dict[f'{stock}_Return5min']
-                # 收益率差值
-                sector_features[f'E_minus_{stock}_return'] = e_return - stock_return
-
-                # 收益率比值
-                sector_features[f'E_div_{stock}_return'] = e_return / (stock_return.abs() + 1e-6)
-
-    # === 5. 板块技术指标综合 ===
     # 收集所有股票的ma_10min_pct特征
     ma_features = []
     for stock in ['A', 'B', 'C', 'D', 'E']:
@@ -504,26 +396,28 @@ def enhanced_time_features(time_series):
     return time_features
 
 
-def add_e_specific_features(stock_features_dict):
+def add_e_specific_features(df,stock_features_dict):
     """为E股添加特定特征（预测目标）"""
     e_features = {}
 
     # E股的各种收益率
     if 'E_price_momentum_5' in stock_features_dict:
         # 1. E股动量强度
-        e_momentum_5 = stock_features_dict['E_price_momentum_5']
-        e_std_20 = e_momentum_5.rolling(20).std()
-        e_features['E_momentum_strength'] = e_momentum_5 / (e_std_20 + 1e-6)
+        e_momentum_5 = df['E_price_momentum_5']
+        e_momentum_5.append(stock_features_dict['E_price_momentum_5'])
+        e_std_20 = e_momentum_5.tail(20).std()
+        e_features['E_momentum_strength'] = e_momentum_5[-1] / (e_std_20 + 1e-6)
 
         # 2. E股动量变化率
-        e_features['E_momentum_change'] = e_momentum_5.pct_change()
+        e_features['E_momentum_change'] = (e_momentum_5[-1]-e_momentum_5[-2])/(e_momentum_5 + 1e-6)
 
         # 3. E股动量符号
-        e_features['E_momentum_sign'] = np.sign(e_momentum_5)
+        e_features['E_momentum_sign'] = np.sign(e_momentum_5[-1])
 
         # 4. E股连续上涨/下跌次数
         sign_series = np.sign(e_momentum_5)
-        consecutive = sign_series.groupby((sign_series != sign_series.shift()).cumsum()).cumcount() + 1
+        lst_pos = e_momentum_5[sign_series * e_momentum_5 < 0].last_valid_index() + 1
+        consecutive = len(e_momentum_5)- lst_pos + 1
         e_features['E_consecutive_direction'] = consecutive * sign_series
 
     # E股与其他股票的互动
@@ -562,20 +456,13 @@ def create_all_features_enhanced(df):
                 processed_ma = post_process_ma_features(ma_df, f'{stock}_')
                 stock_features_dict.update(processed_ma)
 
-    # 添加E股特定特征
-    #print("  添加E股特定特征...")
-    e_specific_features = add_e_specific_features(stock_features_dict)
+    e_specific_features = add_e_specific_features(df,stock_features_dict)
     stock_features_dict.update(e_specific_features)
 
-    # 创建板块特征
-    #print("  创建增强版板块特征...")
     sector_features = enhanced_sector_features(stock_features_dict)
 
-    # 创建极简时间特征
-    #print("  创建极简时间特征...")
-    time_features = enhanced_time_features(df['Time'])
+    time_features = enhanced_time_features(df['Time'][-1])
 
-    # 合并所有特征
     all_features = pd.DataFrame(stock_features_dict)
     all_features = all_features.join(pd.DataFrame(sector_features))
     all_features = all_features.join(pd.DataFrame(time_features))
@@ -585,20 +472,14 @@ def create_all_features_enhanced(df):
     if target_col_name in df.columns:
         all_features['target'] = df[target_col_name]
     else:
-        #print("错误: 没有找到目标列!")
         all_features['target'] = 0
 
-    # 缺失值处理
     all_features = all_features.ffill().bfill().fillna(0)
 
-    #print(f"增强特征创建完成，最终{len(all_features)}行，{len(all_features.columns)}个特征")
-
-    #print(all_features.iloc[[-1]])
     return all_features.iloc[[-1]]
 
 
 def feature_post_processing(features_df):
-    """特征后处理"""
     print("\n特征后处理...")
 
     # 1. 移除相关性极高的特征
@@ -625,8 +506,6 @@ def feature_post_processing(features_df):
         #print(f"  移除{len(low_var_features)}个低方差特征")
         features_df = features_df.drop(columns=low_var_features)
 
-    # 4. 板块特征专门处理（新增部分）
-    #print("  4. 处理板块特征...")
 
     # 4.1 识别板块特征
     sector_cols = [col for col in features_df.columns if any(x in col for x in [
