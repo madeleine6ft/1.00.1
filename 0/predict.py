@@ -213,26 +213,37 @@ def enhanced_stock_features(df, stock_prefix):
             change_1min = ma_value - ma_value_before_1min
             features[f'{stock_prefix}ma_{name}_change_1min'] = change_1min / (ma_value_before_1min + 1e-8)
 
-            # 长期变化：与自身相比（MA自己的变化趋势）
-            # 使用EMA计算趋势强度，避免噪声
-            ema_short = ma_value.ewm(span=60, adjust=False).mean()
-            ema_long = ma_value.ewm(span=300, adjust=False).mean()
-            features[f'{stock_prefix}ma_{name}_trend_strength'] = (ema_short - ema_long) / (ema_long + 1e-8)
+            # 只保留需要的历史数据（span=300最多需要300个数据点）
+            max_span = 300
+            ma_value_truncated = df[f'{stock_prefix}ma_{name}'].tail(max_span-1)  # 不足300行则返回全部
+            ma_value_truncated.append(ma_value)
+            # 计算EMA后只取最后一个值（比全量计算快很多）
+            ema_short = ma_value_truncated.ewm(span=60, adjust=False).mean().iloc[-1]
+            ema_long = ma_value_truncated.ewm(span=300, adjust=False).mean().iloc[-1]
+
+            # 趋势强度计算
+            trend_strength = (ema_short - ema_long) / (ema_long + 1e-8)
+            features[f'{stock_prefix}ma_{name}_trend_strength'] = trend_strength
 
         # 4. 金叉死叉特征（技术分析核心）
         if all(name in ma_dict for name in ['30s', '1min', '5min']):
             ma_30s = ma_dict['30s']
             ma_1min = ma_dict['1min']
             ma_5min = ma_dict['5min']
+            ma_30s_last=df[f'{stock_prefix}ma_{"30s"}'].iloc[-1]#overall_dataframe里面的上一个均线
+            ma_5min_last=df[f'{stock_prefix}ma_{"5min"}'].iloc[-1]
+            ma_1min_last=df[f'{stock_prefix}ma_{"1min"}'].iloc[-1]
+
+
 
             # 4.1 基本金叉死叉信号
             # 30秒线上穿1分钟线
-            cross_up_30s_1min = (ma_30s > ma_1min) & (ma_30s.shift(1) <= ma_1min.shift(1))
-            cross_down_30s_1min = (ma_30s < ma_1min) & (ma_30s.shift(1) >= ma_1min.shift(1))
+            cross_up_30s_1min = (ma_30s > ma_1min) & (ma_30s_last <= ma_1min_last)
+            cross_down_30s_1min = (ma_30s < ma_1min) & (ma_30s_last >= ma_1min_last)
 
             # 1分钟线上穿5分钟线（传统金叉）
-            cross_up_1min_5min = (ma_1min > ma_5min) & (ma_1min.shift(1) <= ma_5min.shift(1))
-            cross_down_1min_5min = (ma_1min < ma_5min) & (ma_1min.shift(1) >= ma_5min.shift(1))
+            cross_up_1min_5min = (ma_1min > ma_5min) & (ma_1min_last <= ma_5min_last)
+            cross_down_1min_5min = (ma_1min < ma_5min) & (ma_1min_last >= ma_5min_last)
 
             features[f'{stock_prefix}cross_up_30s_1min'] = cross_up_30s_1min.astype(int)
             features[f'{stock_prefix}cross_down_30s_1min'] = cross_down_30s_1min.astype(int)
@@ -241,13 +252,13 @@ def enhanced_stock_features(df, stock_prefix):
 
             # 4.2 金叉/死叉后的时间（事件驱动特征）
             # 距离上次金叉的时间（tick数）
-            for cross_name, cross_signal in [('up_1min_5min', cross_up_1min_5min),
-                                             ('down_1min_5min', cross_down_1min_5min)]:
+            for cross_name, cross_signal, name_in_dataframe in [('up_1min_5min', cross_up_1min_5min, f'{stock_prefix}cross_up_1min_5min'),
+                                             ('down_1min_5min', cross_down_1min_5min, f'{stock_prefix}cross_down_1min_5min')]:
                 # 标记金叉发生的位置
-                cross_idx = cross_signal.where(cross_signal).last_valid_index()
+                cross_idx = df[name_in_dataframe][df[name_in_dataframe] == 1].last_valid_index()
                 if cross_idx is not None:
                     # 计算距离上次金叉的时间
-                    time_since_cross = df.index - cross_idx
+                    time_since_cross = len(df) - cross_idx
                     features[f'{stock_prefix}ticks_since_{cross_name}'] = time_since_cross
                 else:
                     features[f'{stock_prefix}ticks_since_{cross_name}'] = 9999  # 很大值表示很久没有
@@ -277,7 +288,7 @@ def enhanced_stock_features(df, stock_prefix):
             features[f'{stock_prefix}ma_bandwidth'] = ma_bandwidth
 
             # 带宽的变化率
-            bandwidth_change = ma_bandwidth - ma_bandwidth.shift(120)  # 1分钟变化
+            bandwidth_change = ma_bandwidth - df[f'{stock_prefix}ma_bandwidth'].iloc[-120]  # 1分钟变化
             features[f'{stock_prefix}ma_bandwidth_change'] = bandwidth_change
 
         # 6. 价格与MA的背离特征
@@ -287,9 +298,9 @@ def enhanced_stock_features(df, stock_prefix):
             ma_5min = ma_dict['5min']
 
             # 计算价格和MA的动量
-            price_momentum = price - price.shift(60)  # 30秒动量
-            ma_1min_momentum = ma_1min - ma_1min.shift(60)
-            ma_5min_momentum = ma_5min - ma_5min.shift(60)
+            price_momentum = price.iloc(-1) - price.iloc(-61)  # 30秒动量
+            ma_1min_momentum = ma_1min - df[f'{stock_prefix}ma_1min'].iloc(-60)
+            ma_5min_momentum = ma_5min - df[f'{stock_prefix}ma_5min'].iloc(-60)
 
             # 背离：价格上涨但MA下跌，或反之
             divergence_1min = ((price_momentum > 0) & (ma_1min_momentum < 0)) | \
