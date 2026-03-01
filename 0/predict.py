@@ -127,7 +127,7 @@ def enhanced_stock_features(df, stock_prefix):
         # === 价格趋势特征 ===
         # 1. 价格动量（短期、中期）
         for period in [5, 10, 20, 30, 60, 120]:  # 增加更多时间尺度
-            features[f'{stock_prefix}price_momentum_{period}'] = (df[last_price_col].iloc[-1] - df[last_price_col].iloc[-1-period]) / df[last_price_col].iloc[-1-period]
+            features[f'{stock_prefix}price_momentum_{period}'] = ((df[last_price_col].to_numpy())[-1] - (df[last_price_col].to_numpy())[-1-period]) / (df[last_price_col].to_numpy())[-1-period]
             #那这里最前面的几个值就NAN了是嘛（
 
         # 2. 价格波动范围
